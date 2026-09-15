@@ -1,0 +1,64 @@
+{
+  "typography": {
+    "headings": "Outfit, sans-serif",
+    "body": "Plus Jakarta Sans, sans-serif",
+    "mono": "JetBrains Mono, monospace"
+  },
+  "colors": {
+    "background_primary": "#0c0718",
+    "background_secondary": "#150b2b",
+    "surface": "rgba(35, 18, 63, 0.45)",
+    "surface_border": "rgba(216, 112, 214, 0.2)",
+    "primary": "#d870d6",
+    "primary_glow": "rgba(216, 112, 214, 0.5)",
+    "accent": "#ff2a85",
+    "text_primary": "#f8f5fc",
+    "text_secondary": "#c3b5db"
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-[#150b2b]/60 border border-[rgba(216,112,214,0.2)] shadow-[0_8px_32px_0_rgba(12,7,24,0.37)]",
+    "glow_effects": "shadow-[0_0_25px_rgba(216,112,214,0.35)]",
+    "gradients": "bg-gradient-to-r from-[#d870d6] via-[#ba55d3] to-[#ff2a85]"
+  },
+  "grids": {
+    "bento_mode": "grid grid-cols-1 md:grid-cols-12 gap-6"
+  },
+  "layouts": {
+    "mobile_first": true,
+    "max_width": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
+  },
+  "motion": {
+    "transitions": "transition-all duration-300 ease-in-out",
+    "hover_lift": "hover:-translate-y-1 hover:shadow-[0_0_30px_rgba(255,42,133,0.4)]"
+  },
+  "accessibility": {
+    "contrast_ratio_min": "4.5:1",
+    "focus_states": "focus:ring-2 focus:ring-[#ff2a85] focus:outline-none"
+  },
+  "media": {
+    "responsive_images": true
+  },
+  "3d_libraries": {
+    "primary": "framer-motion",
+    "particles": "canvas-confetti / custom cosmic dust"
+  },
+  "image_urls": [
+    {
+      "category": "cosmic_bg",
+      "description": "Deep purple cosmos and nebula background",
+      "image_url": "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1920&q=80"
+    },
+    {
+      "category": "mission_avatar",
+      "description": "Futuristic cyberpunk portal icon",
+      "image_url": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=600&q=80"
+    }
+  ],
+  "instructions_to_main_agent": "Build the complete 'THE LOST PROTOCOL' college treasure hunt platform using React, TypeScript, Tailwind CSS, Supabase, and Lucide icons. Follow the Deep Purple, Plum gradient, Magenta highlight, and Pink glow aesthetic precisely. No green hacker themes. Ensure all roles (Team, Volunteer, Event Control, Super Admin) are fully functional with Supabase integration, offline token redemption, audit logging, and realtime countdown/status.",
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Do not use Inter for headings; use Outfit or Plus Jakarta Sans.",
+    "Do not use complete transparent background in headers or overlays.",
+    "All interactive elements must include a data-testid attribute.",
+    "Support mobile-first responsive layout with generous spacing."
+  ]
+}
