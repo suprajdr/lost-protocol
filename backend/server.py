@@ -732,12 +732,12 @@ async def volunteer_view(access_token: str):
 
 CHECKPOINT_MECHANICS = [
     # code, name, clue, challenge, answer, fragment, mechanic, cipher_display, config
-    ("A", "THE ARCHIVE",
-     "The clue is corrupted. Decode the transmission and travel to the archive.",
-     "Decode the cipher, find the physical marker, then enter the verification code.",
-     "a7", "7", "cipher",
-     "01000001 00110111",
-     {"cipher_hint": "Binary → ASCII. The result is the verification code."}),
+   ("A", "CIPHER TRANSMISSION",
+     "A corrupted transmission has been intercepted. Recover the message and locate the first trace of the protocol.",
+     "Decode the transmission. Once you reach the location, observe the final approach and enter the number of stepping stones.",
+     "5", "7", "cipher",
+     "ILQG ZKHUH ILYH OHWWHUV UHVW DPRQJ WKH JUHHQ. WKH SURWRFRO OHIW LWV ILUVW WUDFH WKHUH.",
+     {"cipher_hint": "RECOVERY KEY: 3 — The signal has shifted."}),
     ("B", "THE LANTERN",
      "Where light survives after the crowd leaves.",
      "Recover the number beneath the red lens.",

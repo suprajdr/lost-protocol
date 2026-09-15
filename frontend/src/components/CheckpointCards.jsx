@@ -36,7 +36,7 @@ export function CipherCard({ session, current, onSubmit, onHint }) {
         <p className="muted">{current.challenge}</p>
       </div>
       <label className="answer-label">VERIFICATION CODE
-        <input data-testid="answer-input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="e.g. A7" />
+        <input data-testid="answer-input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="e.g. Enter verification code" />
       </label>
       <button className="button primary full" onClick={() => onSubmit(answer)} data-testid="submit-answer-button">
         <Zap size={16} /> Transmit code
