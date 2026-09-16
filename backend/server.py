@@ -682,13 +682,7 @@ async def issue_offline_token(payload: TokenRequest):
     operator = require_role(payload.access_token, {"admin", "super_admin", "volunteer"})
     team = get_team(payload.team_id.upper())
     cp = get_checkpoint(payload.checkpoint_code)
-    if operator.get("_role") == "volunteer" and not volunteer_assigned_to(operator, cp["id"]):
-        raise HTTPException(403, "This volunteer is not authorized for that checkpoint.")
-    token = f"{cp['code']}-{secrets.token_hex(3).upper()}"
-    row = sb_post_return("offline_tokens", {"token": token, "team_id": team["id"], "checkpoint_id": cp["id"]})
-    sb_post("audit_logs", {"action": "offline_token_issued", "actor_type": "operator", "actor_id": operator.get("id"), "team_id": team["id"], "metadata": {"checkpoint": cp["code"]}})
-    return {"token": row[0]["token"] if row else token}
-
+  
 
 @api.post("/control/announce")
 async def broadcast_announcement(payload: AnnouncementBroadcast):
@@ -714,32 +708,98 @@ async def winner_board(access_token: str):
 
 @api.get("/control/volunteer-view")
 async def volunteer_view(authorization: str = Header(None)):
+    """Volunteer sees only teams currently active at their assigned checkpoint."""
     access_token = (authorization or "").replace("Bearer ", "", 1).strip()
 
     if not access_token:
         raise HTTPException(401, "AUTH REQUIRED")
-    """Volunteer sees only teams currently active at their assigned checkpoint."""
-    operator = require_role(access_token, {"volunteer", "admin", "super_admin", "event_control"})
-    if operator.get("_role") == "volunteer":
-        vol = sb_get("volunteers", {"id": f"eq.{operator['id']}", "select": "checkpoint_id,display_name", "limit": "1"})
-        if not vol or not vol[0].get("checkpoint_id"):
-            return {"assigned_checkpoint": None, "teams": []}
-        checkpoint_id = vol[0]["checkpoint_id"]
+
+    operator = require_role(
+        access_token,
+        {"volunteer", "admin", "super_admin", "event_control"},
+    )
+
+    assignment = sb_get(
+        "volunteer_assignments",
+        {
+            "volunteer_id": f"eq.{operator['id']}",
+            "select": "checkpoint_id",
+            "limit": "1",
+        },
+    )
+
+    if assignment and assignment[0].get("checkpoint_id"):
+        checkpoint_id = assignment[0]["checkpoint_id"]
+
+    elif operator.get("_role") == "volunteer":
+        return {"assigned_checkpoint": None, "teams": []}
+
     else:
-        # Admin/event_control can see everything if they omit checkpoint filter — return first configured
-        cps = sb_get("checkpoints", {"select": "id,code", "order": "code.asc", "limit": "1"})
+        # Admin/event control fallback when no volunteer assignment exists
+        cps = sb_get(
+            "checkpoints",
+            {
+                "select": "id,code",
+                "order": "code.asc",
+                "limit": "1",
+            },
+        )
         checkpoint_id = cps[0]["id"] if cps else None
+
     if not checkpoint_id:
         return {"assigned_checkpoint": None, "teams": []}
-    cp = sb_get("checkpoints", {"id": f"eq.{checkpoint_id}", "select": "id,code,name,mechanic,config", "limit": "1"})[0]
-    active = sb_get("team_progress", {"checkpoint_id": f"eq.{checkpoint_id}", "status": "eq.active", "select": "team_id,attempts,penalty,volunteer_state,metadata"})
-    teams_data = []
-    for row in active:
-        t = sb_get("teams", {"id": f"eq.{row['team_id']}", "select": "team_id,team_name", "limit": "1"})
-        if t:
-            teams_data.append({**t[0], "attempts": row.get("attempts", 0), "penalty": row.get("penalty", 0), "volunteer_state": row.get("volunteer_state"), "grid_visible": (row.get("metadata") or {}).get("grid_visible", False)})
-    return {"assigned_checkpoint": {"code": cp["code"], "name": cp["name"], "mechanic": cp["mechanic"]}, "teams": teams_data}
 
+    cp = sb_get(
+        "checkpoints",
+        {
+            "id": f"eq.{checkpoint_id}",
+            "select": "id,code,name,mechanic,config",
+            "limit": "1",
+        },
+    )[0]
+
+    active = sb_get(
+        "team_progress",
+        {
+            "checkpoint_id": f"eq.{checkpoint_id}",
+            "status": "eq.active",
+            "select": "team_id,attempts,penalty,volunteer_state,metadata",
+        },
+    )
+
+    teams_data = []
+
+    for row in active:
+        t = sb_get(
+            "teams",
+            {
+                "id": f"eq.{row['team_id']}",
+                "select": "team_id,team_name",
+                "limit": "1",
+            },
+        )
+
+        if t:
+            teams_data.append(
+                {
+                    **t[0],
+                    "attempts": row.get("attempts", 0),
+                    "penalty": row.get("penalty", 0),
+                    "volunteer_state": row.get("volunteer_state"),
+                    "grid_visible": (row.get("metadata") or {}).get(
+                        "grid_visible", False
+                    ),
+                }
+            )
+
+    return {
+        "assigned_checkpoint": {
+            "code": cp["code"],
+            "name": cp["name"],
+            "mechanic": cp["mechanic"],
+        },
+        "teams": teams_data,
+    }
 # ------------------------- Admin endpoints -------------------------
 
 CHECKPOINT_MECHANICS = [
