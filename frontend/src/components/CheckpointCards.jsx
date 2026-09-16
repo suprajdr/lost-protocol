@@ -56,7 +56,7 @@ export function AnswerCard({ current, onSubmit }) {
         <p className="muted">{current.challenge}</p>
       </div>
       <label className="answer-label">YOUR RESPONSE
-        <input data-testid="answer-input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Enter decoded phrase" />
+        <input data-testid="answer-input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Enter your answer" />
       </label>
       <button className="button primary full" onClick={() => onSubmit(answer)} data-testid="submit-answer-button">
         <Zap size={16} /> Transmit answer
