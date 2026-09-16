@@ -736,7 +736,7 @@ CHECKPOINT_MECHANICS = [
      "A corrupted transmission has been intercepted. Recover the message and locate the first trace of the protocol.",
      "Decode the transmission. Once you reach the location, observe the final approach and enter the number of stepping stones.",
      "5", "7", "cipher",
-     "ILQG ZKHUH ILYH OHWWHUV UHVW DPRQJ WKH JUHHQ. WKH SURWRFRO OHIW LWV ILUVW WUDFH WKHUH.",
+     "ILQG ZKHUH ILYH OHWWHUV UHVW DPRQJ WKH JUHHQ. WKH SURWRFOR OHIW LWV ILUVW WUDFH WKHUH.",
      {"cipher_hint": "RECOVERY KEY: 3 — The signal has shifted."}),
     ("B", "THE LANTERN",
      "Where light survives after the crowd leaves.",
