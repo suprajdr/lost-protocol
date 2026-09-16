@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Radio, Eye, EyeOff, Play, CheckCircle2, XCircle } from "lucide-react";
 import Shell, { StatusPill } from "@/components/Shell";
 import { authorizedRequest } from "@/lib/api";
@@ -9,15 +9,24 @@ export default function VolunteerStation() {
   const [notice, setNotice] = useState("");
   const [profile, setProfile] = useState(null);
 
-  const loadView = useCallback(async () => {
-    setNotice("");
-    try {
-      const data = await authorizedRequest("/control/volunteer-view");
-      setView(data);
-    } catch (err) {
-      setNotice(err.message);
-    }
-  }, []);
+
+ const loadingView = useRef(false);
+
+const loadView = useCallback(async () => {
+  if (loadingView.current) return;
+
+  loadingView.current = true;
+  setNotice("");
+
+  try {
+    const data = await authorizedRequest("/control/volunteer-view");
+    setView(data);
+  } catch (err) {
+    setNotice(err.message);
+  } finally {
+    loadingView.current = false;
+  }
+}, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {

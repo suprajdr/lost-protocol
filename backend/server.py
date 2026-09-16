@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -195,11 +195,19 @@ def verify_team_token(token):
 
 
 def verify_operator(access_token):
-    r = requests.get(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey": SERVICE_KEY, "Authorization": f"Bearer {access_token}"}, timeout=12)
+    r = requests.get(
+        f"{SUPABASE_URL}/auth/v1/user",
+        headers={
+            "apikey": SERVICE_KEY,
+            "Authorization": f"Bearer {access_token}",
+        },
+        timeout=12,
+    )
+
     if r.status_code >= 400:
         raise HTTPException(401, "Operator session expired")
-    return r.json()
 
+    return r.json()
 
 def require_role(access_token, roles):
     user = verify_operator(access_token)
@@ -705,7 +713,11 @@ async def winner_board(access_token: str):
 
 
 @api.get("/control/volunteer-view")
-async def volunteer_view(access_token: str):
+async def volunteer_view(authorization: str = Header(None)):
+    access_token = (authorization or "").replace("Bearer ", "", 1).strip()
+
+    if not access_token:
+        raise HTTPException(401, "AUTH REQUIRED")
     """Volunteer sees only teams currently active at their assigned checkpoint."""
     operator = require_role(access_token, {"volunteer", "admin", "super_admin", "event_control"})
     if operator.get("_role") == "volunteer":
@@ -742,11 +754,11 @@ CHECKPOINT_MECHANICS = [
      "Where signals are taught but rarely seen, the names of those who teach them stand together. Rise to the third level of a building that remembers a jubilee. The next trace is hiding in plain sight.",
      "The board holds three numbers you need. Count those listed as Professor, Associate Professor, and Assistant Professor — in that order. But three numbers cannot open one node. Let the first multiply the strength of the second. Then strip away the weight of the third. Only one number survives. Enter it.",
      "85", "R", "answer", None, {}),
-    ("C", "THE ECHO CHAMBER",
-     "Sound must return in the correct sequence. A volunteer will run the coordination drill.",
-     "Follow the volunteer's rhythm. Failure carries a small penalty; you may retry.",
+    ("C", "COORDINATION PROTOCOL",
+     "A celebration measured in platinum guards the next signal. Seek the level where your climb has not yet begun. Find the halls built for hundreds of eyes and a single voice. Ignore the first. The second awaits your coordination.",
+     "Four minds. Four controls. One objective. Report to the Protocol Volunteer. Once the sequence begins, your team has 120 seconds to construct the required formation. Direct contact with the objects is forbidden. Coordination is your only control.",
      "", "△", "volunteer_verify", None,
-     {"retry_penalty": -20}),
+     {"retry_penalty": -20, "time_limit_seconds": 120}),
     ("D", "THE CLOCKWORK",
      "Four hands keep a secret without moving. Study the campus images.",
      "Find the clocktower node, scan its QR, then enter the reading at high noon.",
