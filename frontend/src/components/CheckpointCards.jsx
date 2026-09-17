@@ -102,35 +102,82 @@ export function QRScanCard({ session, current, onScan, onSubmit }) {
   const [nodeToken, setNodeToken] = useState("");
   const [answer, setAnswer] = useState("");
   const scanned = !!current.node_scanned;
+
+  const images = current.asset_urls || current.images || [];
+
   return (
     <>
       <div className="clue-copy">
         <span className="metric-label">VISUAL TRACE</span>
         <p data-testid="current-clue">{current.clue}</p>
+
         <span className="metric-label">CHALLENGE</span>
         <p className="muted">{current.challenge}</p>
-        {(current.asset_urls || []).length > 0 && (
+
+        {images.length > 0 && (
           <div className="asset-grid" data-testid="asset-grid">
-            {current.asset_urls.map((u, i) => <img key={i} src={u} alt="" />)}
+            {images.map((u, i) => (
+              <img
+                key={i}
+                src={u}
+                alt={`Visual trace ${i + 1}`}
+              />
+            ))}
           </div>
         )}
       </div>
+
       {!scanned ? (
         <>
-          <label className="answer-label">NODE QR CODE
-            <input data-testid="qr-input" value={nodeToken} onChange={(e) => setNodeToken(e.target.value)} placeholder="Scan or paste the LP-NODE-* token" />
+          <label className="answer-label">
+            NODE QR CODE
+            <input
+              data-testid="qr-input"
+              value={nodeToken}
+              onChange={(e) => setNodeToken(e.target.value)}
+              placeholder="Scan or paste the LP-NODE-* token"
+            />
           </label>
-          <button className="button primary full" onClick={() => onScan(nodeToken)} data-testid="scan-node-button">
+
+          <button
+            className="button primary full"
+            onClick={() => onScan(nodeToken)}
+            data-testid="scan-node-button"
+          >
             <ScanLine size={16} /> Verify node
           </button>
         </>
       ) : (
         <>
-          <div className="notice" data-testid="node-recognized-notice">✔ Node recognized. Enter the verification.</div>
-          <label className="answer-label">VERIFICATION
-            <input data-testid="answer-input" value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Enter the reading" />
+          <div className="notice" data-testid="node-recognized-notice">
+            ✔ NODE AUTHENTICATED
+          </div>
+
+          {current.post_scan_clue && (
+            <div className="clue-copy" style={{ marginTop: 16 }}>
+              <span className="metric-label">FINAL TRANSMISSION</span>
+
+              <p style={{ whiteSpace: "pre-line" }}>
+                {current.post_scan_clue}
+              </p>
+            </div>
+          )}
+
+          <label className="answer-label">
+            TRANSMISSION VALUE
+            <input
+              data-testid="answer-input"
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              placeholder="Enter transmission value"
+            />
           </label>
-          <button className="button primary full" onClick={() => onSubmit(answer)} data-testid="submit-answer-button">
+
+          <button
+            className="button primary full"
+            onClick={() => onSubmit(answer)}
+            data-testid="submit-answer-button"
+          >
             <Zap size={16} /> Transmit answer
           </button>
         </>

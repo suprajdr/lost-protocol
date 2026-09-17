@@ -333,6 +333,7 @@ def public_checkpoint_config(cp, team_metadata):
         public["images"] = cfg.get("images", [])
         public["asset_urls"] = cp.get("asset_urls") or []
         public["node_scanned"] = bool(team_metadata.get("node_scanned"))
+        public["post_scan_clue"] = cfg.get("post_scan_clue")
     elif m == "risk_choice":
         choice = team_metadata.get("choice")
         public["choice"] = choice
@@ -769,28 +770,35 @@ async def volunteer_view(authorization: str = Header(None)):
 
     teams_data = []
 
-    for row in active:
-        t = sb_get(
+    if active:
+        team_ids = [row["team_id"] for row in active]
+
+        teams = sb_get(
             "teams",
             {
-                "id": f"eq.{row['team_id']}",
-                "select": "team_id,team_name",
-                "limit": "1",
+                "id": f"in.({','.join(team_ids)})",
+                "select": "id,team_id,team_name",
             },
         )
 
-        if t:
-            teams_data.append(
-                {
-                    **t[0],
-                    "attempts": row.get("attempts", 0),
-                    "penalty": row.get("penalty", 0),
-                    "volunteer_state": row.get("volunteer_state"),
-                    "grid_visible": (row.get("metadata") or {}).get(
-                        "grid_visible", False
-                    ),
-                }
-            )
+        teams_by_id = {team["id"]: team for team in teams}
+
+        for row in active:
+            team = teams_by_id.get(row["team_id"])
+
+            if team:
+                teams_data.append(
+                    {
+                        "team_id": team["team_id"],
+                        "team_name": team["team_name"],
+                        "attempts": row.get("attempts", 0),
+                        "penalty": row.get("penalty", 0),
+                        "volunteer_state": row.get("volunteer_state"),
+                        "grid_visible": (row.get("metadata") or {}).get(
+                            "grid_visible", False
+                        ),
+                    }
+                )
 
     return {
         "assigned_checkpoint": {
@@ -819,16 +827,36 @@ CHECKPOINT_MECHANICS = [
      "Four minds. Four controls. One objective. Report to the Protocol Volunteer. Once the sequence begins, your team has 120 seconds to construct the required formation. Direct contact with the objects is forbidden. Coordination is your only control.",
      "", "△", "volunteer_verify", None,
      {"retry_penalty": -20, "time_limit_seconds": 120}),
-    ("D", "THE CLOCKWORK",
-     "Four hands keep a secret without moving. Study the campus images.",
-     "Find the clocktower node, scan its QR, then enter the reading at high noon.",
-     "north", "3", "qr_answer", None,
-     {"node_token": "LP-NODE-D-9F2A", "images": []}),
-    ("E", "THE GARDEN GATE",
-     "Find the one keeper bearing ♜. Ask: Did the protocol survive?",
-     "One keeper. One truth. The keeper marks your card.",
+  ("D", "VISUAL TRACE",
+     "Three fragments of a place have survived. Study the visual traces and identify where on campus they were captured.",
+     "Locate the site shown in the visual traces. Search the area for the Protocol Node and scan its QR. Authentication will reveal your final verification.",
+     "90", "3", "qr_answer", None,
+     {
+         "node_token": "LP-NODE-D-9F2A",
+"images": [
+    "/checkpoint-d/trace-1.png",
+    "/checkpoint-d/trace-2.png",
+    "/checkpoint-d/trace-3.png"
+],
+         "post_scan_clue": (
+             "NODE AUTHENTICATED\n\n"
+             "The trace does not end inside the lawn.\n"
+             "Look beyond the entrance.\n\n"
+             "A machine waits there, but it leaves only when its seats agree.\n"
+             "Three travel. Thirty each.\n\n"
+             "Recover the transmission value:\n"
+             "What does one complete departure carry?"
+         )
+     }),
+   ("E", "THE KEEPER",
+     "Where a six is celebrated, a goal is chased, and a smash crosses the net, the Keeper waits. Among those carrying the familiar red identity, one carries a different colour. Find that person and ask: Did the protocol survive?",
+     'The Protocol is hidden inside one of three boxes. BOX A: "The Protocol is in Box B." BOX B: "The Protocol is NOT in Box B." BOX C: "The Protocol is NOT in Box A." Exactly ONE of these statements is true. Which box contains the Protocol?',
      "", "K", "keeper", None,
-     {"symbol": "♜", "phrase": "Did the protocol survive?", "retry_penalty": -20}),
+     {
+         "phrase": "Did the protocol survive?",
+         "correct_answer": "BOX A",
+         "retry_penalty": -20
+     }),
     ("F", "THE OBSERVATORY",
      "Two paths open to the observatory. Choose within the countdown.",
      "SAFE (+100): easier clue. RISK (+180, -40 on failure): harder clue.",
