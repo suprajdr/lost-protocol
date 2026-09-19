@@ -21,6 +21,7 @@ export default function TeamDashboard() {
     try {
       const data = await apiRequest(`/team/state?session_token=${encodeURIComponent(session.session_token)}`);
       setState(data);
+      setNotice("");
       cacheMission(session.team_id, data);
     } catch (err) {
       const cached = readCachedMission(session.team_id);
@@ -33,28 +34,28 @@ export default function TeamDashboard() {
     }
   }, [session, nav]);
 
-  useEffect(() => {
-    loadState();
-    apiRequest("/event/announcements").then(setAnnouncements).catch(() => {});
-    const on = () => loadState();
-    window.addEventListener("online", on);
-    const timer = setInterval(loadState, 8000);
-    // Realtime — refresh state when our progress row changes
-    const channel = supabase
-      .channel("team-progress-live")
-      .on("postgres_changes", { event: "*", schema: "public", table: "team_progress" }, loadState)
-      .on("postgres_changes", { event: "*", schema: "public", table: "events" }, loadState)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "announcements" }, () => {
-        apiRequest("/event/announcements").then(setAnnouncements).catch(() => {});
-      })
-      .subscribe();
-    return () => {
-      window.removeEventListener("online", on);
-      clearInterval(timer);
-      supabase.removeChannel(channel);
-    };
-  }, [loadState]);
+ useEffect(() => {
+  // Initial load
+  loadState();
 
+  apiRequest("/event/announcements")
+    .then(setAnnouncements)
+    .catch(() => {});
+
+  // Refresh immediately when internet reconnects
+  const on = () => loadState();
+  window.addEventListener("online", on);
+
+  // Poll mission state every 10 seconds
+  const timer = setInterval(() => {
+    loadState();
+  }, 10000);
+
+  return () => {
+    window.removeEventListener("online", on);
+    clearInterval(timer);
+  };
+}, [loadState]);
   if (!state) {
     return (
       <Shell role="TEAM // LOADING">
