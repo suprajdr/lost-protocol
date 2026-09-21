@@ -850,11 +850,11 @@ CHECKPOINT_MECHANICS = [
      }),
    ("E", "THE KEEPER",
      "Where a six is celebrated, a goal is chased, and a smash crosses the net, the Keeper waits. Among those carrying the familiar red identity, one carries a different colour. Find that person and ask: Did the protocol survive?",
-    'The Protocol is hidden inside one of three boxes. BOX A: "The Protocol is not in Box A." BOX B: "The Protocol is in Box A." BOX C: "The Protocol is not in Box B." Exactly TWO of these statements are true. Which box contains the Protocol?',
-     "", "K", "keeper", None,
+   "If you have me, you may want to share me. But once you share me, you no longer have me. What am I?",
+"", "K", "keeper", None,
      {
          "phrase": "Did the protocol survive?",
-         "correct_answer": "BOX A",
+         "correct_answer": "SECRET",
          "retry_penalty": -20
      }),
     ("F", "THE OBSERVATORY",
