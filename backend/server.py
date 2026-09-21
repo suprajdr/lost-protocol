@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pathlib import Path
 from datetime import datetime, timezone
-import os, requests, bcrypt, secrets, hashlib, hmac
+import os, requests, bcrypt, secrets, hashlib, hmac, random
+import random
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -64,6 +65,74 @@ class GridControl(BaseModel):
     team_id: str
     checkpoint_code: str
     action: str  # 'START', 'DISPLAY', 'HIDE'
+class ClassroomAnswers(BaseModel):
+    session_token: str
+    checkpoint_code: str
+    answers: list[str]
+
+CLASSROOM_G_QUESTIONS = [
+    {"id": "g1", "question": "What number appeared alone?", "answer": "47"},
+    {"id": "g2", "question": "What time was displayed?", "answer": "06:07"},
+    {"id": "g3", "question": "Which word was upside down?", "answer": "protocol"},
+    {"id": "g4", "question": "How many cups were stacked?", "answer": "3"},
+    {"id": "g5", "question": "What three-character sequence appeared?", "answer": "7-k-3"},
+    {"id": "g6", "question": "Which word appeared by itself?", "answer": "echo"},
+    {"id": "g7", "question": "Which letter appeared alone?", "answer": "k"},
+    {"id": "g8", "question": "Which two geometric symbols were present?", "answer": "triangle diamond"},
+    {"id": "g9", "question": "What colour was the folder?", "answer": "red"},
+    {"id": "g10", "question": "Which letter was placed near the door?", "answer": "r"},
+    {"id": "g11", "question": "Which single digit appeared separately?", "answer": "9"},
+    {"id": "g12", "question": "What object appeared in a stack?", "answer": "cups"},
+]
+
+def select_classroom_questions(count=4):
+    selected = random.sample(
+        CLASSROOM_G_QUESTIONS,
+        min(count, len(CLASSROOM_G_QUESTIONS))
+    )
+
+    return [
+        {
+            "id": item["id"],
+            "question": item["question"]
+        }
+        for item in selected
+    ]
+
+def normalize_classroom_answer(value):
+    value = value.strip().lower()
+
+    replacements = {
+        "△": "triangle",
+        "♢": "diamond",
+        "◇": "diamond",
+    }
+
+    for symbol, word in replacements.items():
+        value = value.replace(symbol, word)
+
+    value = value.replace("-", "")
+    value = value.replace(":", "")
+    value = value.replace(" ", "")
+    value = value.replace(",", "")
+    value = value.replace("and", "")
+
+    return value
+
+
+def check_classroom_answer(question_id, submitted):
+    question = next(
+        (item for item in CLASSROOM_G_QUESTIONS if item["id"] == question_id),
+        None
+    )
+
+    if not question:
+        return False
+
+    expected = normalize_classroom_answer(question["answer"])
+    received = normalize_classroom_answer(submitted)
+
+    return received == expected   
 
 class SeedRequest(BaseModel):
     access_token: str
@@ -383,13 +452,16 @@ def public_checkpoint_config(cp, team_metadata):
     elif m == "keeper":
         public["symbol"] = cfg.get("symbol", "♜")
         public["phrase"] = cfg.get("phrase", "Did the protocol survive?")
-    elif m == "grid_memory":
-        public["display_ms"] = cfg.get("display_ms", 20000)
-        public["questions"] = cfg.get("questions", 4)
+    elif m == "classroom_memory":
+        public["observation_seconds"] = cfg.get("observation_seconds", 30)
+        public["answer_seconds"] = cfg.get("answer_seconds", 45)
+        public["questions_per_attempt"] = cfg.get("questions_per_attempt", 4)
         public["threshold"] = cfg.get("threshold", 3)
-        public["grid_visible"] = bool(team_metadata.get("grid_visible"))
-        if team_metadata.get("grid_visible"):
-            public["grid"] = cfg.get("grid", [])
+        public["room_started"] = bool(team_metadata.get("room_started"))
+        public["questions_unlocked"] = bool(team_metadata.get("questions_unlocked"))
+
+        if team_metadata.get("questions_unlocked"):
+            public["classroom_questions"] = team_metadata.get("classroom_questions", [])
     elif m == "volunteer_verify":
         public["retry_penalty"] = cfg.get("retry_penalty", -20)
     return public
@@ -488,7 +560,7 @@ async def submit_answer(payload: TeamAction):
     metadata = progress.get("metadata") or {}
 
     # Reject text answer for volunteer-only mechanics
-    if mechanic in {"volunteer_verify", "keeper", "grid_memory"}:
+    if mechanic in {"volunteer_verify", "keeper", "classroom_memory"}:
         raise HTTPException(
             400,
             "This checkpoint is verified by a volunteer, not by a submitted answer."
@@ -565,6 +637,146 @@ async def submit_answer(payload: TeamAction):
         "message": "Signal rejected"
     }
 
+@api.post("/team/classroom-answers")
+async def submit_classroom_answers(payload: ClassroomAnswers):
+    require_live_event()
+
+    team_id = verify_team_token(payload.session_token)
+    team = get_team(team_id)
+    cp = get_checkpoint(payload.checkpoint_code)
+
+    if cp.get("mechanic") != "classroom_memory":
+        raise HTTPException(
+            400,
+            "This checkpoint is not a classroom memory challenge."
+        )
+
+    progress = get_active_progress(team["id"], cp["id"])
+
+    if not progress:
+        raise HTTPException(
+            409,
+            "This checkpoint is not currently active."
+        )
+
+    meta = progress.get("metadata") or {}
+
+    if not meta.get("questions_unlocked"):
+        raise HTTPException(
+            409,
+            "The classroom questions have not been unlocked yet."
+        )
+
+    questions = meta.get("classroom_questions") or []
+
+    if not questions:
+        raise HTTPException(
+            409,
+            "No classroom questions are available for this attempt."
+        )
+
+    if len(payload.answers) != len(questions):
+        raise HTTPException(
+            400,
+            f"Exactly {len(questions)} answers are required."
+        )
+
+    correct = 0
+
+    for question, submitted in zip(questions, payload.answers):
+        if check_classroom_answer(
+            question["id"],
+            submitted
+        ):
+            correct += 1
+
+    threshold = (cp.get("config") or {}).get("threshold", 3)
+    passed = correct >= threshold
+
+    # PASS — complete G and award fragment 9
+    if passed:
+        complete_progress(
+            progress,
+            team["id"],
+            cp
+        )
+
+        sb_post(
+            "audit_logs",
+            {
+                "action": "classroom_passed",
+                "actor_type": "team",
+                "team_id": team["id"],
+                "metadata": {
+                    "checkpoint": cp["code"],
+                    "correct": correct,
+                    "total": len(questions)
+                }
+            }
+        )
+
+        return {
+            "correct": correct,
+            "total": len(questions),
+            "passed": True,
+            "fragment": cp.get("fragment"),
+            "message": "Final signal recovered."
+        }
+
+    # FAIL — apply retry penalty and reset G
+    retry_penalty = (cp.get("config") or {}).get(
+        "retry_penalty",
+        -20
+    )
+
+    apply_penalty(
+        progress,
+        retry_penalty,
+        "classroom_failed_attempt"
+    )
+
+    reset_meta = {
+        **meta,
+        "room_started": False,
+        "questions_unlocked": False,
+        "classroom_questions": [],
+        "classroom_answers": None,
+        "classroom_score": correct,
+        "started_at": None,
+        "questions_unlocked_at": None,
+    }
+
+    sb_patch(
+        "team_progress",
+        {"id": f"eq.{progress['id']}"},
+        {
+            "metadata": reset_meta,
+            "volunteer_state": "waiting"
+        }
+    )
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "classroom_failed",
+            "actor_type": "team",
+            "team_id": team["id"],
+            "metadata": {
+                "checkpoint": cp["code"],
+                "correct": correct,
+                "total": len(questions),
+                "penalty": retry_penalty
+            }
+        }
+    )
+
+    return {
+        "correct": correct,
+        "total": len(questions),
+        "passed": False,
+        "penalty": retry_penalty,
+        "message": "Signal recovery failed. Retry required."
+    }
 
 @api.post("/team/scan-node")
 async def scan_node(payload: ScanNode):
@@ -716,58 +928,207 @@ async def verify_team(payload: VerifyTeam):
     cp = get_checkpoint(payload.checkpoint_code)
     if not volunteer_assigned_to(operator, cp["id"]):
         raise HTTPException(403, f"This volunteer is not authorized for checkpoint {cp['code']}.")
-    if cp.get("mechanic") not in {"volunteer_verify", "keeper", "grid_memory"}:
+    if cp.get("mechanic") not in {"volunteer_verify", "keeper", "classroom_memory"}:
         raise HTTPException(400, "This checkpoint is not volunteer-verified.")
     team = get_team(payload.team_id.upper())
     progress = get_active_progress(team["id"], cp["id"])
     if not progress:
         raise HTTPException(409, "That team is not currently at this checkpoint.")
+    
     result = payload.result.upper()
+
     if result not in {"START", "PASS", "FAIL"}:
         raise HTTPException(400, "Result must be START, PASS, or FAIL")
+
+    # Classroom Memory (G) must be completed only through
+    # the automatic classroom question validation.
+    if cp.get("mechanic") == "classroom_memory" and result in {"PASS", "FAIL"}:
+        raise HTTPException(
+            400,
+            "Classroom memory checkpoints cannot be manually passed or failed."
+        )
+
     now = datetime.now(timezone.utc).isoformat()
+        # Prevent restarting G after the classroom attempt has already begun.
+    if (
+        cp.get("mechanic") == "classroom_memory"
+        and result == "START"
+        and progress.get("volunteer_state") != "waiting"
+    ):
+        raise HTTPException(
+            409,
+            "This classroom attempt has already started."
+        )
     if result == "START":
-        meta = {**(progress.get("metadata") or {}), "started_at": now}
-        sb_patch("team_progress", {"id": f"eq.{progress['id']}"}, {"volunteer_state": "in_progress", "metadata": meta})
+        meta = {
+            **(progress.get("metadata") or {}),
+            "started_at": now,
+        }
+
+        if cp.get("mechanic") == "classroom_memory":
+            question_count = (cp.get("config") or {}).get(
+                "questions_per_attempt", 4
+            )
+
+            meta.update({
+                "room_started": True,
+                "questions_unlocked": False,
+                "classroom_questions": select_classroom_questions(question_count),
+                "classroom_answers": None,
+                "classroom_score": None,
+            })
+
+        sb_patch(
+            "team_progress",
+            {"id": f"eq.{progress['id']}"},
+            {
+                "volunteer_state": "in_progress",
+                "metadata": meta
+            }
+        )
+
         outcome = "started"
+
     elif result == "PASS":
         complete_progress(progress, team["id"], cp)
         outcome = "passed"
+
     else:
         retry_penalty = (cp.get("config") or {}).get("retry_penalty", -20)
         apply_penalty(progress, retry_penalty, "failed_retry")
         outcome = "failed"
-    sb_post("audit_logs", {"action": f"verify_{outcome}", "actor_type": "volunteer", "actor_id": operator.get("id"), "team_id": team["id"], "metadata": {"checkpoint": cp["code"], "result": result}})
-    return {"result": result, "outcome": outcome, "checkpoint": cp["code"]}
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": f"verify_{outcome}",
+            "actor_type": "volunteer",
+            "actor_id": operator.get("id"),
+            "team_id": team["id"],
+            "metadata": {
+                "checkpoint": cp["code"],
+                "result": result
+            }
+        }
+    )
+
+    return {
+        "result": result,
+        "outcome": outcome,
+        "checkpoint": cp["code"]
+    }
 
 
-@api.post("/control/grid")
-async def grid_control(payload: GridControl):
-    """G-only: volunteer flips grid visibility on the team's active row."""
+@api.post("/control/classroom")
+async def classroom_control(payload: GridControl):
+    """G-only: unlock classroom questions after the observation period."""
     require_live_event()
-    operator = require_role(payload.access_token, {"admin", "super_admin", "volunteer"})
+
+    operator = require_role(
+        payload.access_token,
+        {"admin", "super_admin", "volunteer"}
+    )
+
     cp = get_checkpoint(payload.checkpoint_code)
-    if cp.get("mechanic") != "grid_memory":
-        raise HTTPException(400, "This checkpoint is not a memory grid.")
+
+    if cp.get("mechanic") != "classroom_memory":
+        raise HTTPException(
+            400,
+            "This checkpoint is not a classroom memory challenge."
+        )
+
     if not volunteer_assigned_to(operator, cp["id"]):
-        raise HTTPException(403, f"This volunteer is not authorized for checkpoint {cp['code']}.")
+        raise HTTPException(
+            403,
+            f"This volunteer is not authorized for checkpoint {cp['code']}."
+        )
+
     team = get_team(payload.team_id.upper())
     progress = get_active_progress(team["id"], cp["id"])
+
     if not progress:
-        raise HTTPException(409, "That team is not currently at this checkpoint.")
+        raise HTTPException(
+            409,
+            "That team is not currently at this checkpoint."
+        )
+
     action = payload.action.upper()
     meta = progress.get("metadata") or {}
-    if action == "START":
-        meta = {**meta, "grid_visible": False, "started_at": datetime.now(timezone.utc).isoformat()}
-    elif action == "DISPLAY":
-        meta = {**meta, "grid_visible": True, "displayed_at": datetime.now(timezone.utc).isoformat()}
-    elif action == "HIDE":
-        meta = {**meta, "grid_visible": False, "hidden_at": datetime.now(timezone.utc).isoformat()}
-    else:
-        raise HTTPException(400, "Action must be START, DISPLAY, or HIDE")
-    sb_patch("team_progress", {"id": f"eq.{progress['id']}"}, {"metadata": meta, "volunteer_state": "in_progress"})
-    sb_post("audit_logs", {"action": f"grid_{action.lower()}", "actor_type": "volunteer", "actor_id": operator.get("id"), "team_id": team["id"], "metadata": {"checkpoint": cp["code"]}})
-    return {"action": action, "grid_visible": meta.get("grid_visible", False)}
+
+    if action != "UNLOCK":
+        raise HTTPException(
+            400,
+            "Action must be UNLOCK."
+        )
+
+    if meta.get("questions_unlocked"):
+        raise HTTPException(
+            409,
+            "Classroom questions have already been unlocked."
+        )
+
+        started_at = meta.get("started_at")
+
+    if started_at:
+        started_time = datetime.fromisoformat(started_at)
+        elapsed = (datetime.now(timezone.utc) - started_time).total_seconds()
+        observation_seconds = (cp.get("config") or {}).get(
+            "observation_seconds", 30
+        )
+
+        if elapsed < observation_seconds:
+            remaining = int(observation_seconds - elapsed) + 1
+            raise HTTPException(
+                409,
+                f"Observation period still active. Wait {remaining} more seconds."
+            )    
+
+    if not meta.get("room_started"):
+        raise HTTPException(
+            409,
+            "Start the classroom observation before unlocking questions."
+        )
+
+    if not meta.get("classroom_questions"):
+        raise HTTPException(
+            409,
+            "No classroom questions were generated for this attempt."
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    meta = {
+        **meta,
+        "questions_unlocked": True,
+        "questions_unlocked_at": now,
+    }
+
+    sb_patch(
+        "team_progress",
+        {"id": f"eq.{progress['id']}"},
+        {
+            "metadata": meta,
+            "volunteer_state": "questions_unlocked"
+        }
+    )
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "classroom_questions_unlocked",
+            "actor_type": "volunteer",
+            "actor_id": operator.get("id"),
+            "team_id": team["id"],
+            "metadata": {
+                "checkpoint": cp["code"]
+            }
+        }
+    )
+
+    return {
+        "action": "UNLOCK",
+        "questions_unlocked": True
+    }
 
 
 @api.post("/control/offline-token")
@@ -956,11 +1317,21 @@ CHECKPOINT_MECHANICS = [
      {"safe": {"clue": "Name the hunter's constellation.", "answer_hash": bcrypt.hashpw(b"orion", bcrypt.gensalt()).decode(), "points": 100},
       "risk": {"clue": "Name the westernmost star of Orion's belt.", "answer_hash": bcrypt.hashpw(b"mintaka", bcrypt.gensalt()).decode(), "points": 180, "penalty": -40},
       "timer_seconds": 60}),
-    ("G", "THE LAST SIGNAL",
-     "Communication blackout. Watch the volunteer's signal grid.",
-     "The grid appears briefly. Answer the volunteer's recall questions. Threshold 3/4.",
-     "", "9", "grid_memory", None,
-     {"grid": [["3","K","7"],["△","9","R"],["♢","O","N"]], "display_ms": 20000, "questions": 4, "threshold": 3, "retry_penalty": -20}),
+        ("G", "THE LAST SIGNAL",
+     "Where platinum marks the passage of time, rise until the ground lies five levels beneath you. "
+     "Seek the room whose number begins where you stand, while its final two digits complete a perfect week. "
+     "The signal is waiting inside.",
+     "Report to the Protocol Volunteer at Room 607. Your team will have 30 seconds inside the observation room. "
+     "No phones, photographs, or writing. Once you leave, four questions will unlock. "
+     "Recover at least 3 of the 4 signals to complete the node.",
+     "", "9", "classroom_memory", None,
+     {
+         "observation_seconds": 30,
+         "answer_seconds": 45,
+         "questions_per_attempt": 4,
+         "threshold": 3,
+         "retry_penalty": -20
+     }),
 ]
 
 
