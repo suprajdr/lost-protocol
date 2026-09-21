@@ -297,23 +297,58 @@ def get_active_progress(team_id, checkpoint_id):
     return rows[0] if rows else None
 
 
-def complete_progress(progress_row, team_id, checkpoint):
+def complete_progress(progress_row, team_id, checkpoint, points_override=None):
     """Mark completed, award points/fragment, activate next node. Idempotent guard: only if still active."""
     now = datetime.now(timezone.utc).isoformat()
-    sb_patch("team_progress", {"id": f"eq.{progress_row['id']}", "status": "eq.active"},
-             {"status": "completed", "score": checkpoint["points"], "completed_at": now, "volunteer_state": "passed"})
+
+    sb_patch(
+        "team_progress",
+        {"id": f"eq.{progress_row['id']}", "status": "eq.active"},
+        {
+            "status": "completed",
+            "score": points_override if points_override is not None else checkpoint["points"],
+            "completed_at": now,
+            "volunteer_state": "passed"
+        }
+    )
+
     # Award fragment (idempotent)
-    frag_rows = sb_get("fragments", {"checkpoint_id": f"eq.{checkpoint['id']}", "select": "id", "limit": "1"})
+    frag_rows = sb_get(
+        "fragments",
+        {
+            "checkpoint_id": f"eq.{checkpoint['id']}",
+            "select": "id",
+            "limit": "1"
+        }
+    )
+
     if frag_rows:
-        sb_upsert("team_fragments", {"team_id": team_id, "fragment_id": frag_rows[0]["id"]},
-                  on_conflict="team_id,fragment_id", prefer="resolution=ignore-duplicates,return=minimal")
+        sb_upsert(
+            "team_fragments",
+            {"team_id": team_id, "fragment_id": frag_rows[0]["id"]},
+            on_conflict="team_id,fragment_id",
+            prefer="resolution=ignore-duplicates,return=minimal"
+        )
+
     # Advance route
     next_pos = progress_row["route_position"] + 1
-    next_row = sb_get("team_progress", {"team_id": f"eq.{team_id}", "route_position": f"eq.{next_pos}", "select": "id", "limit": "1"})
+
+    next_row = sb_get(
+        "team_progress",
+        {
+            "team_id": f"eq.{team_id}",
+            "route_position": f"eq.{next_pos}",
+            "select": "id",
+            "limit": "1"
+        }
+    )
+
     if next_row:
-        sb_patch("team_progress", {"id": f"eq.{next_row[0]['id']}"}, {"status": "active"})
-
-
+        sb_patch(
+            "team_progress",
+            {"id": f"eq.{next_row[0]['id']}"},
+            {"status": "active"}
+        )
 def apply_penalty(progress_row, penalty_delta, note):
     """Increment attempts and apply penalty. Never negative below configured floor."""
     new_penalty = progress_row.get("penalty", 0) + penalty_delta
@@ -438,7 +473,6 @@ async def team_state(session_token: str):
     total_score = sum((row.get("score") or 0) + (row.get("penalty") or 0) for row in progress)
     return {"team": team, "event_state": get_event_state(), "route": ordered, "current": current, "fragments": fragments, "completed": completed_count, "total": len(progress) or 7, "score": total_score, "ready_for_final": completed_count >= 7}
 
-
 @api.post("/team/answer")
 async def submit_answer(payload: TeamAction):
     require_live_event()
@@ -446,32 +480,90 @@ async def submit_answer(payload: TeamAction):
     team = get_team(team_id)
     cp = get_checkpoint(payload.checkpoint_code)
     progress = get_active_progress(team["id"], cp["id"])
+
     if not progress:
         raise HTTPException(403, "That node is not on your active route")
+
     mechanic = cp.get("mechanic", "answer")
     metadata = progress.get("metadata") or {}
+
     # Reject text answer for volunteer-only mechanics
     if mechanic in {"volunteer_verify", "keeper", "grid_memory"}:
-        raise HTTPException(400, "This checkpoint is verified by a volunteer, not by a submitted answer.")
+        raise HTTPException(
+            400,
+            "This checkpoint is verified by a volunteer, not by a submitted answer."
+        )
+
     # QR gate for D
     if mechanic == "qr_answer" and not metadata.get("node_scanned"):
-        raise HTTPException(409, "Scan the checkpoint node QR before submitting the verification.")
+        raise HTTPException(
+            409,
+            "Scan the checkpoint node QR before submitting the verification."
+        )
+
     # Risk choice: require choice first
     choice = metadata.get("choice")
+
     if mechanic == "risk_choice" and choice not in {"safe", "risk"}:
-        raise HTTPException(409, "Choose SAFE or RISK before submitting.")
+        raise HTTPException(
+            409,
+            "Choose SAFE or RISK before submitting."
+        )
+
     valid = verify_answer(cp, mechanic, choice, payload.answer)
-    sb_post("audit_logs", {"action": "answer_attempt", "actor_type": "team", "team_id": team["id"], "metadata": {"checkpoint": cp["code"], "mechanic": mechanic, "valid": valid}})
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "answer_attempt",
+            "actor_type": "team",
+            "team_id": team["id"],
+            "metadata": {
+                "checkpoint": cp["code"],
+                "mechanic": mechanic,
+                "valid": valid
+            }
+        }
+    )
+
     if valid:
-        complete_progress(progress, team["id"], cp)
-        return {"valid": True, "message": "Node recovered", "code": cp["code"]}
-    # RISK failure penalty
+        points_override = None
+
+        if mechanic == "risk_choice":
+            points_override = (
+                (cp.get("config") or {})
+                .get(choice, {})
+                .get("points", cp["points"])
+            )
+
+        complete_progress(
+            progress,
+            team["id"],
+            cp,
+            points_override=points_override
+        )
+
+        return {
+            "valid": True,
+            "message": "Node recovered",
+            "code": cp["code"]
+        }
+
+    # RISK failure penalty — charged on every wrong RISK attempt
     if mechanic == "risk_choice" and choice == "risk":
-        penalty = (cp.get("config") or {}).get("risk", {}).get("penalty", -40)
+        penalty = (
+            (cp.get("config") or {})
+            .get("risk", {})
+            .get("penalty", -40)
+        )
         apply_penalty(progress, penalty, "risk_failed")
     else:
         apply_penalty(progress, 0, "wrong")
-    return {"valid": False, "message": "Signal rejected"}
+
+    return {
+        "valid": False,
+        "message": "Signal rejected"
+    }
 
 
 @api.post("/team/scan-node")
