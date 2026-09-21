@@ -13,6 +13,9 @@ export default function AdminWorkspace() {
   const [rows, setRows] = useState([]);
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState(null);
+  const [assignment, setAssignment] = useState({});
+  const [assigning, setAssigning] = useState(null);
+  const [checkpoints, setCheckpoints] = useState([]);
 
   const load = useCallback(async () => {
     setMessage("");
@@ -24,9 +27,15 @@ export default function AdminWorkspace() {
     }
   }, [resource]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+useEffect(() => {
+  load();
+
+  if (resource === "volunteers") {
+    authorizedRequest("/admin/checkpoints")
+      .then((data) => setCheckpoints(data))
+      .catch((err) => setMessage(err.message));
+  }
+}, [load, resource]);
 
   const seed = async () => {
     try {
@@ -53,6 +62,38 @@ export default function AdminWorkspace() {
   const primaryLabel = resource === "teams" && !rows.length ? "Seed event data" : canEdit ? "Add record" : "Refresh";
   const primaryAction = resource === "teams" && !rows.length ? seed : canEdit ? () => setEditing({}) : load;
 
+  const assignVolunteer = async (volunteerId) => {
+  const checkpointCode = assignment[volunteerId];
+
+  if (!checkpointCode) {
+    setMessage("Select a checkpoint first.");
+    return;
+  }
+
+  setAssigning(volunteerId);
+  setMessage("");
+
+  try {
+    const body = await authorizedRequest(
+      "/admin/volunteer-assignment",
+      "POST",
+      {
+        volunteer_id: volunteerId,
+        checkpoint_code: checkpointCode,
+      }
+    );
+
+    setMessage(
+      `Assigned to Checkpoint ${body.checkpoint_code} — ${body.checkpoint_name}`
+    );
+
+    load();
+  } catch (err) {
+    setMessage(err.message);
+  } finally {
+    setAssigning(null);
+  }
+};
   const renderRow = (row, index) => {
     const key = row.id || row.key || `${index}`;
     const primary = row.team_id || row.code || row.display_name || row.name || row.key || row.action || row.message || "Record";
@@ -64,6 +105,53 @@ export default function AdminWorkspace() {
         <strong>{primary}</strong>
         <span className="muted">{secondary}</span>
         <span className="workspace-status">{status}</span>
+        {resource === "volunteers" && (
+  <span className="muted">
+    {row.checkpoint_id
+      ? `Checkpoint ${
+          checkpoints.find((cp) => cp.id === row.checkpoint_id)?.code || "?"
+        }`
+      : "Unassigned"}
+  </span>
+)}
+        {resource === "volunteers" && (
+  <span className="row-actions">
+    <select
+      value={assignment[row.id] || ""}
+      onChange={(e) =>
+        setAssignment((prev) => ({
+          ...prev,
+          [row.id]: e.target.value,
+        }))
+      }
+      style={{
+        background: "#1b0d2e",
+        color: "#ffffff",
+        border: "1px solid rgba(236, 72, 153, 0.45)",
+        borderRadius: "6px",
+        padding: "7px 10px",
+        outline: "none",
+        cursor: "pointer",
+      }}
+    >
+      <option value="">Select checkpoint</option>
+
+      {["A", "B", "C", "D", "E", "F", "G"].map((code) => (
+        <option key={code} value={code}>
+          Checkpoint {code}
+        </option>
+      ))}
+    </select>
+
+    <button
+      className="text-button"
+      onClick={() => assignVolunteer(row.id)}
+      disabled={!assignment[row.id] || assigning === row.id}
+    >
+      {assigning === row.id ? "Assigning..." : "Assign"}
+    </button>
+  </span>
+)}
         {canEdit && (
           <span className="row-actions">
             <button className="text-button" onClick={() => setEditing(row)} data-testid={`edit-${resource}-${index}`}>Edit</button>

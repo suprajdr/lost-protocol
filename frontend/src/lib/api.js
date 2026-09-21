@@ -39,11 +39,11 @@ export async function authorizedRequest(path, method = "GET", payload = {}) {
   }
 
   if (method === "GET") {
-  const separator = path.includes("?") ? "&" : "?";
-
-  return apiRequest(
-    `${path}${separator}access_token=${encodeURIComponent(access_token)}`
-  );
+  return apiRequest(path, {
+    headers: {
+      Authorization: `Bearer ${access_token}`,
+    },
+  });
 }
 
   if (method === "DELETE") {

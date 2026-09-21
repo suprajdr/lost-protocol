@@ -262,7 +262,6 @@ def verify_team_token(token):
         raise HTTPException(401, "Invalid team session")
     return team_id
 
-
 def verify_operator(access_token):
     r = requests.get(
         f"{SUPABASE_URL}/auth/v1/user",
@@ -274,6 +273,7 @@ def verify_operator(access_token):
     )
 
     if r.status_code >= 400:
+        print("SUPABASE AUTH ERROR:", r.status_code, r.text)
         raise HTTPException(401, "Operator session expired")
 
     return r.json()
@@ -1145,9 +1145,13 @@ async def broadcast_announcement(payload: AnnouncementBroadcast):
     sb_post("audit_logs", {"action": "announcement", "actor_type": "operator", "actor_id": operator.get("id"), "metadata": {"message": payload.message}})
     return row[0] if row else {"message": payload.message}
 
-
 @api.get("/control/winner")
-async def winner_board(access_token: str):
+async def winner_board(authorization: str = Header(None)):
+    access_token = (authorization or "").replace("Bearer ", "", 1).strip()
+
+    if not access_token:
+        raise HTTPException(401, "AUTH REQUIRED")
+
     require_role(access_token, {"admin", "super_admin", "event_control"})
     attempts = sb_get("final_attempts", {"is_valid": "eq.true", "select": "id,team_id,attempted_at", "order": "attempted_at.asc", "limit": "50"})
     winners = []
@@ -1161,17 +1165,22 @@ async def winner_board(access_token: str):
 
 
 @api.get("/control/volunteer-view")
-async def volunteer_view(authorization: str = Header(None)):
+async def volunteer_view(
+    access_token: str = "",
+    authorization: str = Header(None),
+):
     """Volunteer sees only teams currently active at their assigned checkpoint."""
-    access_token = (authorization or "").replace("Bearer ", "", 1).strip()
 
-    if not access_token:
+    token = access_token or (authorization or "").replace("Bearer ", "", 1).strip()
+
+    if not token:
         raise HTTPException(401, "AUTH REQUIRED")
 
     operator = require_role(
-        access_token,
+        token,
         {"volunteer", "admin", "super_admin", "event_control"},
     )
+
 
     assignment = sb_get(
         "volunteer_assignments",
@@ -1445,7 +1454,91 @@ async def dev_seed_operator(payload: DevOperatorSeed):
         attach_volunteer(user_id, payload.display_name or payload.email.split("@")[0], payload.checkpoint_code)
     return {"id": user_id, "email": payload.email, "role": role}
 
+@api.post("/admin/volunteer-assignment")
+async def admin_volunteer_assignment(payload: dict):
+    operator = require_role(
+        payload.get("access_token"),
+        {"admin", "super_admin", "event_control"},
+    )
 
+    volunteer_id = payload.get("volunteer_id")
+    checkpoint_code = str(payload.get("checkpoint_code", "")).upper().strip()
+
+    if not volunteer_id or not checkpoint_code:
+        raise HTTPException(400, "volunteer_id and checkpoint_code are required")
+
+    volunteers = sb_get(
+        "volunteers",
+        {
+            "id": f"eq.{volunteer_id}",
+            "select": "id,display_name",
+            "limit": "1",
+        },
+    )
+
+    if not volunteers:
+        raise HTTPException(404, "Volunteer not found")
+
+    checkpoints = sb_get(
+        "checkpoints",
+        {
+            "code": f"eq.{checkpoint_code}",
+            "select": "id,code,name",
+            "limit": "1",
+        },
+    )
+
+    if not checkpoints:
+        raise HTTPException(404, "Checkpoint not found")
+
+    checkpoint = checkpoints[0]
+
+    # Remove previous assignment
+    r = requests.delete(
+        f"{SUPABASE_URL}/rest/v1/volunteer_assignments",
+        headers=_headers(True),
+        params={"volunteer_id": f"eq.{volunteer_id}"},
+        timeout=10,
+    )
+
+    if r.status_code >= 400:
+        raise HTTPException(503, f"DB unavailable: {r.text[:180]}")
+
+    # Create new assignment
+    sb_post(
+        "volunteer_assignments",
+        {
+            "volunteer_id": volunteer_id,
+            "checkpoint_id": checkpoint["id"],
+        },
+    )
+
+    # Keep volunteers.checkpoint_id synchronized too
+    sb_patch(
+        "volunteers",
+        {"id": f"eq.{volunteer_id}"},
+        {"checkpoint_id": checkpoint["id"]},
+    )
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "volunteer_assignment_changed",
+            "actor_type": "operator",
+            "actor_id": operator.get("id"),
+            "metadata": {
+                "volunteer_id": volunteer_id,
+                "checkpoint_code": checkpoint_code,
+            },
+        },
+    )
+
+    return {
+        "ok": True,
+        "volunteer_id": volunteer_id,
+        "checkpoint_code": checkpoint["code"],
+        "checkpoint_name": checkpoint["name"],
+    }
 @api.post("/admin/operators")
 async def admin_create_operator(payload: OperatorSeed):
     operator = require_role(payload.access_token, {"admin", "super_admin"})
@@ -1479,14 +1572,31 @@ ADMIN_EDITABLE = {
 
 
 @api.get("/admin/{resource}")
-async def admin_list(resource: str, access_token: str):
+async def admin_list(resource: str, authorization: str = Header(None)):
+    access_token = (authorization or "").replace("Bearer ", "", 1).strip()
+
+    if not access_token:
+        raise HTTPException(401, "AUTH REQUIRED")
+
     require_role(access_token, {"admin", "super_admin", "event_control"})
     resource = ADMIN_ALIAS.get(resource, resource)
-    if resource not in ADMIN_LIST_FIELDS:
-        raise HTTPException(404, "Workspace not found")
-    order = "created_at.desc" if "created_at" in ADMIN_LIST_FIELDS[resource] else "key.asc" if resource == "event_settings" else "name.asc"
-    return sb_get(resource, {"select": ADMIN_LIST_FIELDS[resource], "order": order, "limit": "200"})
+    if resource == "event_settings":
+        order = "key.asc"
+    elif "created_at" in ADMIN_LIST_FIELDS[resource]:
+        order = "created_at.desc"
+    elif resource == "volunteers":
+        order = "display_name.asc"
+    else:
+        order = "name.asc"
 
+    return sb_get(
+        resource,
+        {
+            "select": ADMIN_LIST_FIELDS[resource],
+            "order": order,
+            "limit": "200",
+        },
+    )
 
 def editable_payload(resource, payload):
     resource = ADMIN_ALIAS.get(resource, resource)
