@@ -38,7 +38,9 @@ const loadView = useCallback(async () => {
       .channel("volunteer-station")
       .on("postgres_changes", { event: "*", schema: "public", table: "team_progress" }, loadView)
       .subscribe();
-    const timer = setInterval(loadView, 5000);
+    const timer = setInterval(() => {
+  loadView();
+}, 30000);
     return () => {
       supabase.removeChannel(channel);
       clearInterval(timer);

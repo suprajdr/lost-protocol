@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, CircleHelp, WifiOff } from "lucide-react";
 import Shell from "@/components/Shell";
@@ -15,24 +15,36 @@ export default function TeamDashboard() {
   const [notice, setNotice] = useState("");
   const [announcements, setAnnouncements] = useState([]);
   const [pendingHint, setPendingHint] = useState(null);
+  const loadingState = useRef(false);
 
-  const loadState = useCallback(async () => {
-    if (!session) return nav("/team/login");
-    try {
-      const data = await apiRequest(`/team/state?session_token=${encodeURIComponent(session.session_token)}`);
-      setState(data);
-      setNotice("");
-      cacheMission(session.team_id, data);
-    } catch (err) {
-      const cached = readCachedMission(session.team_id);
-      if (cached) {
-        setState(cached.state);
-        setNotice("Using cached mission — reconnect for live updates.");
-      } else {
-        setNotice(err.message);
-      }
+ const loadState = useCallback(async () => {
+  if (!session) return nav("/team/login");
+
+  // Prevent overlapping /team/state requests
+  if (loadingState.current) return;
+  loadingState.current = true;
+
+  try {
+    const data = await apiRequest(
+      `/team/state?session_token=${encodeURIComponent(session.session_token)}`
+    );
+
+    setState(data);
+    setNotice("");
+    cacheMission(session.team_id, data);
+  } catch (err) {
+    const cached = readCachedMission(session.team_id);
+
+    if (cached) {
+      setState(cached.state);
+      setNotice("Using cached mission — reconnect for live updates.");
+    } else {
+      setNotice(err.message);
     }
-  }, [session, nav]);
+  } finally {
+    loadingState.current = false;
+  }
+}, [session, nav]);
 
  useEffect(() => {
   // Initial load
@@ -49,7 +61,7 @@ export default function TeamDashboard() {
   // Poll mission state every 10 seconds
   const timer = setInterval(() => {
     loadState();
-  }, 10000);
+  }, 30000);
 
   return () => {
     window.removeEventListener("online", on);
