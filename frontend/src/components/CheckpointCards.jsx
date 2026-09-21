@@ -256,3 +256,156 @@ export function GridMemoryCard({ current }) {
     </>
   );
 }
+export function ClassroomMemoryCard({ current, session, onComplete }) {
+  const questions = current.classroom_questions || [];
+  const [answers, setAnswers] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+const questionKey = questions
+  .map((q) => q.id)
+  .sort()
+  .join("-");
+
+useEffect(() => {
+  setAnswers({});
+  setResult(null);
+  setError("");
+}, [questionKey]);
+
+  const updateAnswer = (questionId, value) => {
+    setAnswers((prev) => ({
+      ...prev,
+      [questionId]: value,
+    }));
+  };
+
+  return (
+    <>
+      <div className="clue-copy">
+        <span className="metric-label">THE LAST SIGNAL</span>
+        <p data-testid="current-clue">{current.clue}</p>
+
+        <span className="metric-label">CHALLENGE</span>
+        <p className="muted">{current.challenge}</p>
+      </div>
+
+      {!current.room_started && (
+        <div className="notice">
+          Report to the volunteer at Room 607 and wait for the observation
+          protocol to begin.
+        </div>
+      )}
+
+      {current.room_started && !current.questions_unlocked && (
+        <div className="notice">
+          OBSERVATION ACTIVE — Study the room carefully. Questions will unlock
+          after your team exits.
+        </div>
+      )}
+
+      {current.questions_unlocked && questions.length > 0 && (
+        <div>
+          <div className="notice">
+            QUESTIONS UNLOCKED — Answer at least 3 of 4 correctly.
+          </div>
+
+{questions.map((question, index) => (
+  <div key={question.id} style={{ marginTop: 16 }}>
+    <label>
+      <strong>
+        {index + 1}. {question.question}
+      </strong>
+    </label>
+
+    <input
+      type="text"
+      value={answers[question.id] || ""}
+      onChange={(e) =>
+        updateAnswer(question.id, e.target.value)
+      }
+      placeholder="Enter answer"
+      disabled={submitting}
+style={{
+  width: "100%",
+  marginTop: 8,
+  padding: "12px 14px",
+  background: "rgba(20, 8, 38, 0.85)",
+  border: "1px solid rgba(255, 90, 180, 0.35)",
+  borderRadius: "8px",
+  color: "#ffffff",
+  outline: "none",
+  fontFamily: "'JetBrains Mono', monospace",
+}}
+    />
+  </div>
+))}
+
+<button
+  className="button primary full"
+  style={{ marginTop: 18 }}
+  disabled={
+    submitting ||
+    questions.some((question) => !answers[question.id]?.trim())
+  }
+  onClick={async () => {
+    setSubmitting(true);
+    setError("");
+    setResult(null);
+
+    try {
+      const data = await apiRequest("/team/classroom-answers", {
+        method: "POST",
+        body: JSON.stringify({
+          session_token: session.session_token,
+          checkpoint_code: current.code,
+          answers: questions.map(
+            (question) => answers[question.id] || ""
+          ),
+        }),
+      });
+
+      if (data.passed) {
+        setResult(
+          `PROTOCOL RECOVERED — ${data.correct}/${data.total} correct.`
+        );
+      } else {
+        setResult(
+          `PROTOCOL FAILED — ${data.correct}/${data.total} correct. ${data.penalty} point penalty applied.`
+        );
+      }
+
+      if (onComplete) {
+        await onComplete();
+      }
+    } catch (err) {
+      setError(formatDetail(err.message));
+    } finally {
+      setSubmitting(false);
+    }
+  }}
+>
+  {submitting ? "VERIFYING..." : "SUBMIT ANSWERS"}
+</button>
+</div>
+      )}
+      {error && (
+        <div className="notice" style={{ marginTop: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div className="notice" style={{ marginTop: 12 }}>
+          {result}
+        </div>
+      )}
+
+      {current.attempts > 0 && (
+        <div className="notice">
+          Attempts: {current.attempts} · penalty {current.penalty} pts
+        </div>
+      )}
+    </>
+  );
+}

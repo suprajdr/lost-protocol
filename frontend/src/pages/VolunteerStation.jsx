@@ -72,6 +72,24 @@ const loadView = useCallback(async () => {
     }
   };
 
+  const classroomAction = async (teamId) => {
+  setNotice("");
+  try {
+    await authorizedRequest("/control/classroom", "POST", {
+      team_id: teamId,
+      checkpoint_code: view.assigned_checkpoint.code,
+      action: "UNLOCK",
+    });
+
+    setNotice(`QUESTIONS UNLOCKED — ${teamId}`);
+    loadView();
+  } catch (err) {
+    setNotice(err.message);
+  }
+};
+
+  
+
   const issueToken = async (teamId) => {
     setNotice("");
     try {
@@ -120,8 +138,8 @@ const loadView = useCallback(async () => {
 
   const cp = view.assigned_checkpoint;
   const isGrid = cp.mechanic === "grid_memory";
-  const isVolMech = ["volunteer_verify", "keeper", "grid_memory"].includes(cp.mechanic);
-
+  const isClassroom = cp.mechanic === "classroom_memory";
+  const isVolMech = ["volunteer_verify", "keeper", "grid_memory", "classroom_memory"].includes(cp.mechanic);
   return (
     <Shell role="VOLUNTEER STATION">
       <main className="control-page page-wrap">
@@ -147,19 +165,54 @@ const loadView = useCallback(async () => {
                 <span className="workspace-status" data-testid={`team-state-${t.team_id}`}>{t.volunteer_state?.toUpperCase() || "IDLE"}</span>
               </div>
               {t.attempts > 0 && <div className="notice">Attempts: {t.attempts} · Penalty {t.penalty}</div>}
-              {isVolMech && (
-                <div className="volunteer-actions">
-                  <button onClick={() => verify(t.team_id, "START")} data-testid={`volunteer-start-${t.team_id}`}><Play size={14} /> START</button>
-                  <button className="pass" onClick={() => verify(t.team_id, "PASS")} data-testid={`volunteer-pass-${t.team_id}`}><CheckCircle2 size={14} /> PASS</button>
-                  <button className="fail" onClick={() => verify(t.team_id, "FAIL")} data-testid={`volunteer-fail-${t.team_id}`}><XCircle size={14} /> FAIL</button>
-                </div>
-              )}
+             {isVolMech && (
+  <div className="volunteer-actions">
+    {(!isClassroom || t.volunteer_state === "waiting") && (
+  <button
+    onClick={() => verify(t.team_id, "START")}
+    data-testid={`volunteer-start-${t.team_id}`}
+  >
+    <Play size={14} /> START
+  </button>
+)}
+
+    {!isClassroom && (
+      <>
+        <button
+          className="pass"
+          onClick={() => verify(t.team_id, "PASS")}
+          data-testid={`volunteer-pass-${t.team_id}`}
+        >
+          <CheckCircle2 size={14} /> PASS
+        </button>
+
+        <button
+          className="fail"
+          onClick={() => verify(t.team_id, "FAIL")}
+          data-testid={`volunteer-fail-${t.team_id}`}
+        >
+          <XCircle size={14} /> FAIL
+        </button>
+      </>
+    )}
+  </div>
+)}
               {isGrid && (
                 <div className="volunteer-actions" style={{ marginTop: 10 }}>
                   <button onClick={() => gridAction(t.team_id, "DISPLAY")} data-testid={`grid-display-${t.team_id}`}><Eye size={14} /> DISPLAY {t.grid_visible ? "(on)" : ""}</button>
                   <button onClick={() => gridAction(t.team_id, "HIDE")} data-testid={`grid-hide-${t.team_id}`}><EyeOff size={14} /> HIDE</button>
                 </div>
               )}
+              {isClassroom && t.volunteer_state === "in_progress" && (
+  <div className="volunteer-actions" style={{ marginTop: 10 }}>
+    <button
+      onClick={() => classroomAction(t.team_id)}
+      data-testid={`classroom-unlock-${t.team_id}`}
+    >
+      <Eye size={14} /> UNLOCK QUESTIONS
+    </button>
+  </div>
+)}
               <button className="button ghost full" style={{ marginTop: 10 }} onClick={() => issueToken(t.team_id)} data-testid={`issue-token-${t.team_id}`}>
                 Issue offline verification token
               </button>

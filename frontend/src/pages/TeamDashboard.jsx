@@ -3,7 +3,16 @@ import { Link, useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, CircleHelp, WifiOff } from "lucide-react";
 import Shell from "@/components/Shell";
 import Nodes from "@/components/Nodes";
-import { AnswerCard, CipherCard, VolunteerWaitCard, KeeperCard, QRScanCard, RiskChoiceCard, GridMemoryCard } from "@/components/CheckpointCards";
+import {
+  AnswerCard,
+  CipherCard,
+  VolunteerWaitCard,
+  KeeperCard,
+  QRScanCard,
+  RiskChoiceCard,
+  GridMemoryCard,
+  ClassroomMemoryCard
+} from "@/components/CheckpointCards";
 import { apiRequest, formatDetail, getTeamSession, clearTeamSession } from "@/lib/api";
 import { cacheMission, readCachedMission } from "@/lib/offline";
 import { supabase } from "@/lib/supabase";
@@ -174,8 +183,19 @@ export default function TeamDashboard() {
     if (m === "risk_choice") return <RiskChoiceCard current={current} onChoose={chooseRisk} onSubmit={submitAnswer} />;
     if (m === "volunteer_verify") return <VolunteerWaitCard current={current} />;
     if (m === "keeper") return <KeeperCard current={current} />;
-    if (m === "grid_memory") return <GridMemoryCard current={current} />;
-    return <AnswerCard current={current} onSubmit={submitAnswer} />;
+if (m === "grid_memory") return <GridMemoryCard current={current} />;
+
+if (m === "classroom_memory") {
+  return (
+    <ClassroomMemoryCard
+      current={current}
+      session={session}
+      onComplete={loadState}
+    />
+  );
+}
+
+return <AnswerCard current={current} onSubmit={submitAnswer} />;
   };
 
   return (
