@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Bell, ChevronRight, CircleHelp, WifiOff } from "lucide-react";
 import Shell from "@/components/Shell";
@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function TeamDashboard() {
   const nav = useNavigate();
-  const session = getTeamSession();
+  const session = useMemo(() => getTeamSession(), []);
   const [state, setState] = useState(null);
   const [notice, setNotice] = useState("");
   const [announcements, setAnnouncements] = useState([]);
