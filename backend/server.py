@@ -1033,15 +1033,15 @@ async def verify_team(payload: VerifyTeam):
 
     now = datetime.now(timezone.utc).isoformat()
         # Prevent restarting G after the classroom attempt has already begun.
-   if (
-    cp.get("mechanic") == "classroom_memory"
-    and result == "START"
-    and progress.get("volunteer_state") not in {"idle", "waiting", None}
-):
-    raise HTTPException(
-        409,
-        "This classroom attempt has already started."
-    )
+    if (
+        cp.get("mechanic") == "classroom_memory"
+        and result == "START"
+        and progress.get("volunteer_state") not in {"idle", "waiting", None}
+    ):
+        raise HTTPException(
+            409,
+            "This classroom attempt has already started."
+        )
     if result == "START":
         meta = {
             **(progress.get("metadata") or {}),
