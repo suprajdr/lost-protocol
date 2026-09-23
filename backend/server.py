@@ -897,19 +897,102 @@ async def redeem_offline_token(payload: RedeemToken):
     return {"valid": True, "message": "Offline verification accepted"}
 
 # ------------------------- Control endpoints -------------------------
-
 @api.post("/control/event")
 async def control_event(payload: EventAction):
-    operator = require_role(payload.access_token, {"admin", "super_admin", "event_control"})
-    if payload.state not in {"DRAFT", "READY", "STANDBY", "LIVE", "PAUSED", "ENDED"}:
+    operator = require_role(
+        payload.access_token,
+        {"admin", "super_admin", "event_control"}
+    )
+
+    if payload.state not in {
+        "DRAFT", "READY", "STANDBY",
+        "LIVE", "PAUSED", "ENDED"
+    }:
         raise HTTPException(400, "Invalid event state")
-    events = sb_get("events", {"select": "id", "order": "created_at.desc", "limit": "1"})
+
+    events = sb_get(
+        "events",
+        {
+            "select": "id,state",
+            "order": "created_at.desc",
+            "limit": "1"
+        }
+    )
+
     if not events:
         raise HTTPException(404, "Event not configured")
-    sb_patch("events", {"id": f"eq.{events[0]['id']}"}, {"state": payload.state})
-    sb_post("audit_logs", {"action": "event_control", "actor_type": "operator", "actor_id": operator.get("id"), "metadata": {"state": payload.state}})
-    return {"state": payload.state}
 
+    event = events[0]
+    previous_state = event.get("state")
+
+    # Start a fresh event
+    if payload.state == "LIVE" and previous_state in {
+        "DRAFT", "READY", "STANDBY"
+    }:
+        teams = sb_get(
+            "teams",
+            {
+                "status": "eq.active",
+                "select": "id"
+            }
+        )
+
+        for team in teams:
+            progress = sb_get(
+                "team_progress",
+                {
+                    "team_id": f"eq.{team['id']}",
+                    "select": "id,route_position,status",
+                    "order": "route_position.asc"
+                }
+            )
+
+            if not progress:
+                continue
+
+            # Don't accidentally restart a team that has already begun.
+            already_started = any(
+                row.get("status") in {"active", "completed"}
+                for row in progress
+            )
+
+            if already_started:
+                continue
+
+            first = progress[0]
+
+            sb_patch(
+                "team_progress",
+                {"id": f"eq.{first['id']}"},
+                {
+                    "status": "active",
+                    "volunteer_state": "idle"
+                }
+            )
+
+    sb_patch(
+        "events",
+        {"id": f"eq.{event['id']}"},
+        {"state": payload.state}
+    )
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "event_control",
+            "actor_type": "operator",
+            "actor_id": operator.get("id"),
+            "metadata": {
+                "state": payload.state,
+                "previous_state": previous_state
+            }
+        }
+    )
+
+    return {
+        "state": payload.state,
+        "previous_state": previous_state
+    }
 
 @api.post("/control/volunteer")
 async def volunteer_action(payload: VolunteerAction):
