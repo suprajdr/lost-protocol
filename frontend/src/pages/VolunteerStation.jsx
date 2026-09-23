@@ -167,7 +167,10 @@ const loadView = useCallback(async () => {
               {t.attempts > 0 && <div className="notice">Attempts: {t.attempts} · Penalty {t.penalty}</div>}
              {isVolMech && (
   <div className="volunteer-actions">
-    {(!isClassroom || !t.volunteer_state || t.volunteer_state === "waiting") && (
+    {(!isClassroom ||
+  !t.volunteer_state ||
+  t.volunteer_state === "idle" ||
+  t.volunteer_state === "waiting") && (
   <button
     onClick={() => verify(t.team_id, "START")}
     data-testid={`volunteer-start-${t.team_id}`}
