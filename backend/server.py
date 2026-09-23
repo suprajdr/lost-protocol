@@ -1150,7 +1150,7 @@ async def classroom_control(payload: GridControl):
             "Classroom questions have already been unlocked."
         )
 
-        started_at = meta.get("started_at")
+    started_at = meta.get("started_at")
 
     if started_at:
         started_time = datetime.fromisoformat(started_at)
