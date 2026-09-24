@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 from datetime import datetime, timezone
 import os, requests, bcrypt, secrets, hashlib, hmac, random
-import random
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -1030,26 +1029,7 @@ async def submit_final(payload: FinalSubmission):
         "protocol_solved_at": now,
         "message": "Protocol reconstructed. Return to Audi 2.",
     }
-    require_live_event()
-    team_id = verify_team_token(payload.session_token)
-    team = get_team(team_id)
-    settings = sb_get("event_settings", {"key": "eq.final_answer_hash", "select": "value", "limit": "1"})
-    completed = sb_get("team_progress", {"team_id": f"eq.{team['id']}", "status": "eq.completed", "select": "id"})
-    final_hash = settings[0]["value"].get("hash", "") if settings else ""
-    already = sb_get("final_attempts", {"team_id": f"eq.{team['id']}", "is_valid": "eq.true", "select": "id", "limit": "1"})
-    if already:
-        return {"valid": True, "message": "Final protocol already recorded", "already": True}
-    if len(completed) < 7:
-        sb_post("final_attempts", {"team_id": team["id"], "answer_hash": hashlib.sha256(payload.answer.encode()).hexdigest(), "is_valid": False})
-        sb_post("audit_logs", {"action": "final_submission", "actor_type": "team", "team_id": team["id"], "metadata": {"valid": False, "reason": "not_ready"}})
-        raise HTTPException(423, f"Final protocol locked — {len(completed)}/7 nodes recovered.")
-    valid = bool(final_hash and bcrypt.checkpw(payload.answer.strip().lower().encode(), final_hash.encode()))
-    sb_post("final_attempts", {"team_id": team["id"], "answer_hash": hashlib.sha256(payload.answer.encode()).hexdigest(), "is_valid": valid})
-    if valid:
-        sb_patch("teams", {"id": f"eq.{team['id']}"}, {"status": "finished"})
-    sb_post("audit_logs", {"action": "final_submission", "actor_type": "team", "team_id": team["id"], "metadata": {"valid": valid}})
-    return {"valid": valid, "message": "Final protocol complete" if valid else "Master key rejected"}
-
+   
 
 @api.post("/team/redeem-token")
 async def redeem_offline_token(payload: RedeemToken):
@@ -1203,19 +1183,16 @@ async def control_event(payload: EventAction):
     event = events[0]
     previous_state = event.get("state")
 
-    # Start a fresh event
-    if payload.state == "LIVE" and previous_state in {
-        "DRAFT", "READY", "STANDBY"
-    }:
-        teams = sb_get(
-            "teams",
-            {
-                "status": "eq.active",
-                "select": "id"
-            }
-        )
+    # Start event: unlock position 0 for all teams if not already unlocked
+    if payload.state == "LIVE" and previous_state in {"DRAFT", "READY", "STANDBY"}:
+        # Fetch all teams (omit restrictive status filtering)
+        teams = sb_get("teams", {"select": "id,team_id,status"})
 
         for team in teams:
+            # Unlock the team if it was in standby
+            if team.get("status") in {"standby", "registered"}:
+                sb_patch("teams", {"id": f"eq.{team['id']}"}, {"status": "active"})
+
             progress = sb_get(
                 "team_progress",
                 {
@@ -1228,25 +1205,23 @@ async def control_event(payload: EventAction):
             if not progress:
                 continue
 
-            # Don't accidentally restart a team that has already begun.
+            # Check if any node is already active or completed
             already_started = any(
                 row.get("status") in {"active", "completed"}
                 for row in progress
             )
 
-            if already_started:
-                continue
-
-            first = progress[0]
-
-            sb_patch(
-                "team_progress",
-                {"id": f"eq.{first['id']}"},
-                {
-                    "status": "active",
-                    "volunteer_state": "idle"
-                }
-            )
+            # If no node is active, unlock the first checkpoint (position 0)
+            if not already_started:
+                first = progress[0]
+                sb_patch(
+                    "team_progress",
+                    {"id": f"eq.{first['id']}"},
+                    {
+                        "status": "active",
+                        "volunteer_state": "idle"
+                    }
+                )
 
     sb_patch(
         "events",
