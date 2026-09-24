@@ -860,7 +860,6 @@ async def request_hint(payload: HintRequest):
     sb_post("audit_logs", {"action": "hint_usage", "actor_type": "team", "team_id": team["id"], "metadata": {"checkpoint": cp["code"], "hint": hint["name"], "charged": charged}})
     return {"name": hint["name"], "content": hint["content"], "penalty": hint["penalty"], "charged": charged, "message": "Hint charged" if charged else "Hint already revealed — no additional penalty."}
 
-
 @api.post("/team/final")
 async def submit_final(payload: FinalSubmission):
     require_live_event()
@@ -884,7 +883,7 @@ async def submit_final(payload: FinalSubmission):
             {
                 "team_id": team["id"],
                 "answer_hash": hashlib.sha256(
-                    payload.answer.encode()
+                    payload.answer.encode("utf-8")
                 ).hexdigest(),
                 "is_valid": False,
                 "stage": "protocol",
@@ -953,16 +952,28 @@ async def submit_final(payload: FinalSubmission):
         else ""
     )
 
-    valid = bool(
-        final_hash
-        and bcrypt.checkpw(
-            payload.answer.strip().lower().encode(),
-            final_hash.encode(),
+    # IMPORTANT:
+    # The master key is case-sensitive.
+    # Do NOT use .lower() here.
+    answer = payload.answer.strip()
+
+    try:
+        valid = bool(
+            final_hash
+            and bcrypt.checkpw(
+                answer.encode("utf-8"),
+                final_hash.encode("utf-8"),
+            )
         )
-    )
+    except Exception as e:
+        print("Final answer bcrypt error:", repr(e))
+        raise HTTPException(
+            500,
+            "Final answer verification failed",
+        )
 
     answer_hash = hashlib.sha256(
-        payload.answer.encode()
+        answer.encode("utf-8")
     ).hexdigest()
 
     if not valid:
@@ -1007,7 +1018,6 @@ async def submit_final(payload: FinalSubmission):
         },
     )
 
-    # IMPORTANT:
     # Do NOT mark the team finished here.
     # The team must still complete the Audi 2 extraction.
 
@@ -1029,8 +1039,6 @@ async def submit_final(payload: FinalSubmission):
         "protocol_solved_at": now,
         "message": "Protocol reconstructed. Return to Audi 2.",
     }
-   
-
 @api.post("/team/redeem-token")
 async def redeem_offline_token(payload: RedeemToken):
     require_live_event()
