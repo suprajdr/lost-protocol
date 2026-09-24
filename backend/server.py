@@ -34,6 +34,11 @@ class FinalSubmission(BaseModel):
     session_token: str
     answer: str
 
+class Audi2Submission(BaseModel):
+    access_token: str
+    team_id: str
+    answer: str    
+
 class ScanNode(BaseModel):
     session_token: str
     checkpoint_code: str
@@ -860,6 +865,172 @@ async def request_hint(payload: HintRequest):
 @api.post("/team/final")
 async def submit_final(payload: FinalSubmission):
     require_live_event()
+
+    team_id = verify_team_token(payload.session_token)
+    team = get_team(team_id)
+
+    # Team must complete all 7 checkpoints first.
+    completed = sb_get(
+        "team_progress",
+        {
+            "team_id": f"eq.{team['id']}",
+            "status": "eq.completed",
+            "select": "id",
+        },
+    )
+
+    if len(completed) < 7:
+        sb_post(
+            "final_attempts",
+            {
+                "team_id": team["id"],
+                "answer_hash": hashlib.sha256(
+                    payload.answer.encode()
+                ).hexdigest(),
+                "is_valid": False,
+                "stage": "protocol",
+            },
+        )
+
+        sb_post(
+            "audit_logs",
+            {
+                "action": "final_submission",
+                "actor_type": "team",
+                "team_id": team["id"],
+                "metadata": {
+                    "valid": False,
+                    "reason": "not_ready",
+                },
+            },
+        )
+
+        raise HTTPException(
+            423,
+            f"Final protocol locked — {len(completed)}/7 nodes recovered.",
+        )
+
+    # If this team has already reconstructed the protocol,
+    # don't create another successful attempt.
+    already = sb_get(
+        "final_attempts",
+        {
+            "team_id": f"eq.{team['id']}",
+            "is_valid": "eq.true",
+            "select": "id,stage,protocol_solved_at,finished_at",
+            "order": "attempted_at.asc",
+            "limit": "1",
+        },
+    )
+
+    if already:
+        attempt = already[0]
+
+        return {
+            "valid": True,
+            "stage": attempt.get("stage") or "audi2",
+            "protocol_solved_at": attempt.get("protocol_solved_at"),
+            "finished_at": attempt.get("finished_at"),
+            "message": (
+                "Final extraction already complete."
+                if attempt.get("stage") == "finished"
+                else "Protocol already reconstructed. Return to Audi 2."
+            ),
+            "already": True,
+        }
+
+    settings = sb_get(
+        "event_settings",
+        {
+            "key": "eq.final_answer_hash",
+            "select": "value",
+            "limit": "1",
+        },
+    )
+
+    final_hash = (
+        settings[0]["value"].get("hash", "")
+        if settings
+        else ""
+    )
+
+    valid = bool(
+        final_hash
+        and bcrypt.checkpw(
+            payload.answer.strip().lower().encode(),
+            final_hash.encode(),
+        )
+    )
+
+    answer_hash = hashlib.sha256(
+        payload.answer.encode()
+    ).hexdigest()
+
+    if not valid:
+        sb_post(
+            "final_attempts",
+            {
+                "team_id": team["id"],
+                "answer_hash": answer_hash,
+                "is_valid": False,
+                "stage": "protocol",
+            },
+        )
+
+        sb_post(
+            "audit_logs",
+            {
+                "action": "final_submission",
+                "actor_type": "team",
+                "team_id": team["id"],
+                "metadata": {
+                    "valid": False,
+                },
+            },
+        )
+
+        return {
+            "valid": False,
+            "stage": "protocol",
+            "message": "Master key rejected",
+        }
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    sb_post(
+        "final_attempts",
+        {
+            "team_id": team["id"],
+            "answer_hash": answer_hash,
+            "is_valid": True,
+            "stage": "audi2",
+            "protocol_solved_at": now,
+        },
+    )
+
+    # IMPORTANT:
+    # Do NOT mark the team finished here.
+    # The team must still complete the Audi 2 extraction.
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "protocol_reconstructed",
+            "actor_type": "team",
+            "team_id": team["id"],
+            "metadata": {
+                "stage": "audi2",
+            },
+        },
+    )
+
+    return {
+        "valid": True,
+        "stage": "audi2",
+        "protocol_solved_at": now,
+        "message": "Protocol reconstructed. Return to Audi 2.",
+    }
+    require_live_event()
     team_id = verify_team_token(payload.session_token)
     team = get_team(team_id)
     settings = sb_get("event_settings", {"key": "eq.final_answer_hash", "select": "value", "limit": "1"})
@@ -895,6 +1066,113 @@ async def redeem_offline_token(payload: RedeemToken):
     complete_progress(progress, team["id"], cp)
     sb_post("audit_logs", {"action": "offline_token_redeemed", "actor_type": "team", "team_id": team["id"], "metadata": {"checkpoint": cp["code"]}})
     return {"valid": True, "message": "Offline verification accepted"}
+
+@api.post("/control/audi2-finish")
+async def audi2_finish(payload: Audi2Submission):
+    require_live_event()
+
+    operator = require_role(
+        payload.access_token,
+        {"admin", "super_admin", "event_control"}
+    )
+
+    team = get_team(payload.team_id.upper())
+
+    # Team must have successfully reconstructed the Final Protocol.
+    attempts = sb_get(
+        "final_attempts",
+        {
+            "team_id": f"eq.{team['id']}",
+            "is_valid": "eq.true",
+            "select": "id,stage,protocol_solved_at,finished_at",
+            "order": "attempted_at.asc",
+            "limit": "1",
+        },
+    )
+
+    if not attempts:
+        raise HTTPException(
+            409,
+            "This team has not reconstructed the Final Protocol yet."
+        )
+
+    attempt = attempts[0]
+
+    if attempt.get("stage") == "finished":
+        return {
+            "valid": True,
+            "already": True,
+            "team_id": team["team_id"],
+            "finished_at": attempt.get("finished_at"),
+            "message": "This team has already completed the final extraction.",
+        }
+
+    if attempt.get("stage") != "audi2":
+        raise HTTPException(
+            409,
+            "This team is not cleared for the Audi 2 extraction."
+        )
+
+    # Final physical extraction answer.
+    if payload.answer.strip().upper() != "RESTORE":
+        sb_post(
+            "audit_logs",
+            {
+                "action": "audi2_failed_attempt",
+                "actor_type": "operator",
+                "actor_id": operator.get("id"),
+                "team_id": team["id"],
+                "metadata": {
+                    "stage": "audi2",
+                },
+            },
+        )
+
+        return {
+            "valid": False,
+            "message": "Final extraction rejected.",
+        }
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # This timestamp is the team's REAL finish time.
+    sb_patch(
+        "final_attempts",
+        {"id": f"eq.{attempt['id']}"},
+        {
+            "stage": "finished",
+            "finished_at": now,
+        },
+    )
+
+    sb_patch(
+        "teams",
+        {"id": f"eq.{team['id']}"},
+        {
+            "status": "finished",
+        },
+    )
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "audi2_completed",
+            "actor_type": "operator",
+            "actor_id": operator.get("id"),
+            "team_id": team["id"],
+            "metadata": {
+                "stage": "finished",
+                "finished_at": now,
+            },
+        },
+    )
+
+    return {
+        "valid": True,
+        "team_id": team["team_id"],
+        "finished_at": now,
+        "message": "FINAL EXTRACTION VERIFIED — PROTOCOL RESTORED.",
+    }    
 
 # ------------------------- Control endpoints -------------------------
 @api.post("/control/event")
@@ -1235,17 +1513,107 @@ async def winner_board(authorization: str = Header(None)):
     if not access_token:
         raise HTTPException(401, "AUTH REQUIRED")
 
-    require_role(access_token, {"admin", "super_admin", "event_control"})
-    attempts = sb_get("final_attempts", {"is_valid": "eq.true", "select": "id,team_id,attempted_at", "order": "attempted_at.asc", "limit": "50"})
-    winners = []
-    for attempt in attempts:
-        team = sb_get("teams", {"id": f"eq.{attempt['team_id']}", "select": "team_id,team_name", "limit": "1"})
-        scores = sb_get("team_progress", {"team_id": f"eq.{attempt['team_id']}", "select": "score,penalty"})
-        total = sum((row.get("score") or 0) + (row.get("penalty") or 0) for row in scores)
-        winners.append({**attempt, "team": team[0] if team else {}, "score": total})
-    winners.sort(key=lambda w: (w["attempted_at"], -w["score"]))
-    return {"winner": winners[0] if winners else None, "finish_order": winners, "server_time": datetime.now(timezone.utc).isoformat()}
+    require_role(
+        access_token,
+        {"admin", "super_admin", "event_control"}
+    )
 
+    # Get every successful protocol reconstruction.
+    attempts = sb_get(
+        "final_attempts",
+        {
+            "is_valid": "eq.true",
+            "select": (
+                "id,team_id,attempted_at,stage,"
+                "protocol_solved_at,finished_at"
+            ),
+            "order": "protocol_solved_at.asc",
+            "limit": "50",
+        },
+    )
+
+    teams = []
+
+    for attempt in attempts:
+        team_rows = sb_get(
+            "teams",
+            {
+                "id": f"eq.{attempt['team_id']}",
+                "select": "team_id,team_name,status",
+                "limit": "1",
+            },
+        )
+
+        scores = sb_get(
+            "team_progress",
+            {
+                "team_id": f"eq.{attempt['team_id']}",
+                "select": "score,penalty",
+            },
+        )
+
+        total_score = sum(
+            (row.get("score") or 0) +
+            (row.get("penalty") or 0)
+            for row in scores
+        )
+
+        protocol_time = attempt.get("protocol_solved_at")
+        finish_time = attempt.get("finished_at")
+
+        extraction_seconds = None
+
+        if protocol_time and finish_time:
+            protocol_dt = datetime.fromisoformat(
+                protocol_time.replace("Z", "+00:00")
+            )
+            finish_dt = datetime.fromisoformat(
+                finish_time.replace("Z", "+00:00")
+            )
+
+            extraction_seconds = int(
+                (finish_dt - protocol_dt).total_seconds()
+            )
+
+        teams.append(
+            {
+                **attempt,
+                "team": team_rows[0] if team_rows else {},
+                "score": total_score,
+                "extraction_seconds": extraction_seconds,
+            }
+        )
+
+    # Only Audi 2 verified teams belong in the official finish order.
+    finish_order = [
+        row
+        for row in teams
+        if row.get("stage") == "finished"
+        and row.get("finished_at")
+    ]
+
+    finish_order.sort(
+        key=lambda row: row["finished_at"]
+    )
+
+    # Teams that solved the protocol but are still returning to Audi 2.
+    audi2_pending = [
+        row
+        for row in teams
+        if row.get("stage") == "audi2"
+        and not row.get("finished_at")
+    ]
+
+    audi2_pending.sort(
+        key=lambda row: row.get("protocol_solved_at") or ""
+    )
+
+    return {
+        "winner": finish_order[0] if finish_order else None,
+        "finish_order": finish_order,
+        "audi2_pending": audi2_pending,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
 
 @api.get("/control/volunteer-view")
 async def volunteer_view(

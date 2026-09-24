@@ -95,7 +95,7 @@ export default function FinalProtocol() {
     setNotice("");
 
     try {
-      const requiredOrder = ["7", "R", "△", "3", "K", "♢", "9"];
+      const requiredOrder = ["K", "R", "9", "7", "3", "â™¢", "â–³"];  
 const selectedOrder = answer.map((item) => item.value);
 
 const correctOrder = requiredOrder.every(
@@ -128,16 +128,102 @@ if (!correctOrder) {
 
       if (data.valid) {
         setComplete(true);
-
-        setTimeout(() => {
-          nav("/team/finished");
-        }, 2000);
+        setNotice("");
       }
     } catch (err) {
       setNotice(err.message);
     }
   };
+  if (complete) {
+    return (
+      <Shell role="TEAM // FINAL PROTOCOL">
+        <main className="final-page page-wrap">
 
+          <div className="final-orbit">
+            <div className="orbit-core">
+              <Sparkles size={28} />
+              <strong>✓</strong>
+              <span>PROTOCOL RECONSTRUCTED</span>
+            </div>
+          </div>
+
+          <p className="eyebrow center">
+            MASTER KEY ACCEPTED
+          </p>
+
+          <h2 className="center">
+            RETURN TO <em>ORIGIN</em>
+          </h2>
+
+          <div
+            className="glass-card final-card"
+            style={{ textAlign: "center" }}
+          >
+            <span className="metric-label">
+              FINAL TRANSMISSION
+            </span>
+
+            <h2 style={{ marginTop: "20px" }}>
+              AUDI 2
+            </h2>
+
+            <p className="muted" style={{ marginTop: "14px" }}>
+              The transmission began before you knew
+              you were searching for it.
+            </p>
+
+            <p style={{ marginTop: "22px" }}>
+              Seven fragments.
+              <br />
+              Seven channels.
+              <br />
+              The final signal is waiting at the origin.
+            </p>
+
+            <div
+              style={{
+                marginTop: "28px",
+                padding: "18px",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "12px",
+              }}
+            >
+              <span className="metric-label">
+                DEPTH KEY
+              </span>
+
+              <h3
+                style={{
+                  marginTop: "12px",
+                  letterSpacing: "6px",
+                }}
+              >
+                II · V · I · VII · IV · III · VI
+              </h3>
+
+              <p className="muted" style={{ marginTop: "12px" }}>
+                Seven fragments. Seven channels.
+                <br />
+                Left to right.
+                <br />
+                Depth reveals what order conceals.
+              </p>
+            </div>
+
+            <p
+              className="muted"
+              style={{ marginTop: "28px" }}
+            >
+              Return to Audi 2 and complete the final extraction.
+              <br />
+              Your protocol has not been fully restored yet.
+            </p>
+
+          </div>
+        </main>
+      </Shell>
+    );
+  }
   return (
     <Shell role="TEAM // FINAL PROTOCOL">
       <main className="final-page page-wrap">
@@ -148,13 +234,13 @@ if (!correctOrder) {
             <strong>{complete ? "✔" : "7/7"}</strong>
 
             <span>
-              {complete ? "PROTOCOL ACTIVATED" : "NODES RECOVERED"}
+              {complete ? "PROTOCOL RECONSTRUCTED" : "NODES RECOVERED"}
             </span>
           </div>
         </div>
 
         <p className="eyebrow center">
-          {complete ? "FINAL PROTOCOL ACTIVATED" : "RECOVERY COMPLETE"}
+          {complete ? "MASTER KEY ACCEPTED" : "RECOVERY COMPLETE"}
         </p>
 
         <h2 className="center">
@@ -231,19 +317,25 @@ if (!correctOrder) {
             </p>
 
             <p className="muted">
-              Where five letters rested among the green.
+              Begin where the Keeper judged your secret.
               <br /><br />
-              Where the number was discovered from the ECE staff board.
+
+              Then return to where the number was discovered from the ECE staff board.
               <br /><br />
-              Where your team moved as one to control the cups.
+
+              Follow the signal to where thirty seconds of memory decided your fate.
               <br /><br />
-              Where images led you to the hidden signal.
+
+              Seek the place where five letters rested among the green.
               <br /><br />
-              Where the Keeper judged your secret.
+
+              Continue where images led you to the hidden signal.
               <br /><br />
-              Where you chose between SAFE and RISK beneath the stars.
+
+              Look again beneath the stars, where you chose between SAFE and RISK.
               <br /><br />
-              Where thirty seconds of memory decided your fate.
+
+              End where your team moved as one to control the cups.
             </p>
 
             <p className="center" style={{ marginBottom: 0 }}>
@@ -337,9 +429,7 @@ if (!correctOrder) {
             </p>
           )}
 
-          <p className="muted center small">
-            Winner = earliest valid completion; score is the tie-breaker.
-          </p>
+          
         </div>
       </main>
     </Shell>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, ChevronRight, Radio } from "lucide-react";
+import { Activity, ChevronRight, Radio, KeyRound } from "lucide-react";
 import Shell, { StatusPill } from "@/components/Shell";
 import WinnerBoard from "@/components/WinnerBoard";
 import { authorizedRequest, apiRequest } from "@/lib/api";
@@ -11,6 +11,9 @@ export default function EventControl() {
   const [teams, setTeams] = useState([]);
   const [announcement, setAnnouncement] = useState("");
   const [notice, setNotice] = useState("");
+  const [finalTeamId, setFinalTeamId] = useState("");
+  const [finalWord, setFinalWord] = useState("");
+  const [verifyingFinal, setVerifyingFinal] = useState(false);
 
   const reload = async () => {
     try {
@@ -62,7 +65,54 @@ export default function EventControl() {
       setNotice(err.message);
     }
   };
+  const verifyAudi2Finish = async (e) => {
+  e.preventDefault();
 
+  const teamId = finalTeamId.trim().toUpperCase();
+  const answer = finalWord.trim().toUpperCase();
+
+  if (!teamId) {
+    setNotice("Enter the team ID.");
+    return;
+  }
+
+  if (!answer) {
+    setNotice("Enter the final extraction word.");
+    return;
+  }
+
+  setVerifyingFinal(true);
+  setNotice("");
+
+  try {
+    const body = await authorizedRequest(
+      "/control/audi2-finish",
+      "POST",
+      {
+        team_id: teamId,
+        answer,
+      }
+    );
+
+    if (!body.valid) {
+      setNotice(body.message || "Final extraction rejected.");
+      return;
+    }
+
+    setNotice(
+      `${body.team_id} — FINAL EXTRACTION VERIFIED. PROTOCOL RESTORED.`
+    );
+
+    setFinalTeamId("");
+    setFinalWord("");
+
+    await reload();
+  } catch (err) {
+    setNotice(err.message);
+  } finally {
+    setVerifyingFinal(false);
+  }
+};
   const activeCount = teams.filter((t) => t.status === "active").length;
   const finishedCount = teams.filter((t) => t.status === "finished").length;
 
@@ -105,6 +155,52 @@ export default function EventControl() {
               <input value={announcement} onChange={(e) => setAnnouncement(e.target.value)} placeholder="Ten minutes remaining." data-testid="broadcast-input" />
             </label>
             <button className="button primary full" type="submit" data-testid="broadcast-button">Send to all teams</button>
+          </form>
+          <form
+            className="glass-card status-list"
+            onSubmit={verifyAudi2Finish}
+            data-testid="audi2-final-form"
+          >
+            <div className="section-head">
+              <span className="metric-label">
+                AUDI 2 // FINAL EXTRACTION
+              </span>
+              <KeyRound size={17} />
+            </div>
+
+            <p className="muted" style={{ marginTop: 10 }}>
+              Verify a team only after they physically return to Audi 2
+              and solve the final extraction.
+            </p>
+
+            <label className="answer-label" style={{ marginTop: 12 }}>
+              TEAM ID
+              <input
+                value={finalTeamId}
+                onChange={(e) => setFinalTeamId(e.target.value.toUpperCase())}
+                placeholder="LP-07"
+                autoComplete="off"
+              />
+            </label>
+
+            <label className="answer-label">
+              FINAL WORD
+              <input
+                value={finalWord}
+                onChange={(e) => setFinalWord(e.target.value.toUpperCase())}
+                placeholder="Enter extracted word"
+                autoComplete="off"
+              />
+            </label>
+
+            <button
+              className="button primary full"
+              type="submit"
+              disabled={verifyingFinal}
+            >
+              <KeyRound size={15} />
+              {verifyingFinal ? "VERIFYING..." : "VERIFY FINAL EXTRACTION"}
+            </button>
           </form>
           <div className="glass-card table-card">
             <div className="section-head">
