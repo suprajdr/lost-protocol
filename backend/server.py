@@ -1163,18 +1163,22 @@ async def control_event(payload: EventAction):
     )
 
     if payload.state not in {
-        "DRAFT", "READY", "STANDBY",
-        "LIVE", "PAUSED", "ENDED"
+        "DRAFT",
+        "READY",
+        "STANDBY",
+        "LIVE",
+        "PAUSED",
+        "ENDED",
     }:
         raise HTTPException(400, "Invalid event state")
 
     events = sb_get(
         "events",
         {
-            "select": "id,state",
+            "select": "id,state,starts_at,ends_at",
             "order": "created_at.desc",
-            "limit": "1"
-        }
+            "limit": "1",
+        },
     )
 
     if not events:
@@ -1183,52 +1187,199 @@ async def control_event(payload: EventAction):
     event = events[0]
     previous_state = event.get("state")
 
-    # Start event: unlock position 0 for all teams if not already unlocked
-    if payload.state == "LIVE" and previous_state in {"DRAFT", "READY", "STANDBY"}:
-        # Fetch all teams (omit restrictive status filtering)
-        teams = sb_get("teams", {"select": "id,team_id,status"})
+    # ---------------------------------------------------------
+    # START / LIVE
+    # ---------------------------------------------------------
+    if payload.state == "LIVE":
+
+        # Fetch every team
+        teams = sb_get(
+            "teams",
+            {
+                "select": "id,team_id,status",
+                "order": "team_id.asc",
+            },
+        )
 
         for team in teams:
-            # Unlock the team if it was in standby
-            if team.get("status") in {"standby", "registered"}:
-                sb_patch("teams", {"id": f"eq.{team['id']}"}, {"status": "active"})
 
+            # Activate registered/standby teams
+            if team.get("status") in {"standby", "registered"}:
+                sb_patch(
+                    "teams",
+                    {"id": f"eq.{team['id']}"},
+                    {"status": "active"},
+                )
+
+            # -------------------------------------------------
+            # Check whether progress already exists
+            # -------------------------------------------------
             progress = sb_get(
                 "team_progress",
                 {
                     "team_id": f"eq.{team['id']}",
-                    "select": "id,route_position,status",
-                    "order": "route_position.asc"
-                }
+                    "select": (
+                        "id,checkpoint_id,route_position,"
+                        "status,score,attempts,penalty,"
+                        "metadata,volunteer_state"
+                    ),
+                    "order": "route_position.asc",
+                },
             )
 
+            # -------------------------------------------------
+            # If progress does not exist, build it from route
+            # -------------------------------------------------
             if not progress:
-                continue
 
-            # Check if any node is already active or completed
-            already_started = any(
-                row.get("status") in {"active", "completed"}
-                for row in progress
-            )
-
-            # If no node is active, unlock the first checkpoint (position 0)
-            if not already_started:
-                first = progress[0]
-                sb_patch(
-                    "team_progress",
-                    {"id": f"eq.{first['id']}"},
+                team_routes = sb_get(
+                    "team_routes",
                     {
-                        "status": "active",
-                        "volunteer_state": "idle"
-                    }
+                        "team_id": f"eq.{team['id']}",
+                        "select": "route_id",
+                        "limit": "1",
+                    },
                 )
 
-    sb_patch(
-        "events",
-        {"id": f"eq.{event['id']}"},
-        {"state": payload.state}
-    )
+                if not team_routes or not team_routes[0].get("route_id"):
+                    print(
+                        f"WARNING: No route assigned to {team['team_id']}"
+                    )
+                    continue
 
+                route_id = team_routes[0]["route_id"]
+
+                routes = sb_get(
+                    "routes",
+                    {
+                        "id": f"eq.{route_id}",
+                        "select": "id,checkpoint_order",
+                        "limit": "1",
+                    },
+                )
+
+                if not routes:
+                    print(
+                        f"WARNING: Route {route_id} not found "
+                        f"for {team['team_id']}"
+                    )
+                    continue
+
+                checkpoint_order = routes[0].get(
+                    "checkpoint_order"
+                ) or []
+
+                # checkpoint_order should be:
+                # ["A", "B", "C", ...]
+                for position, checkpoint_code in enumerate(
+                    checkpoint_order
+                ):
+
+                    checkpoints = sb_get(
+                        "checkpoints",
+                        {
+                            "code": (
+                                f"eq.{str(checkpoint_code).upper()}"
+                            ),
+                            "select": "id,code",
+                            "limit": "1",
+                        },
+                    )
+
+                    if not checkpoints:
+                        print(
+                            f"WARNING: Checkpoint "
+                            f"{checkpoint_code} missing "
+                            f"for {team['team_id']}"
+                        )
+                        continue
+
+                    checkpoint = checkpoints[0]
+
+                    sb_post(
+                        "team_progress",
+                        {
+                            "team_id": team["id"],
+                            "checkpoint_id": checkpoint["id"],
+                            "route_position": position,
+                            "status": (
+                                "active"
+                                if position == 0
+                                else "locked"
+                            ),
+                            "score": 0,
+                            "attempts": 0,
+                            "penalty": 0,
+                            "metadata": {},
+                            "volunteer_state": "idle",
+                        },
+                    )
+
+            # -------------------------------------------------
+            # Progress already exists
+            # Make sure a fresh team has an active first node.
+            # NEVER disturb teams that already started.
+            # -------------------------------------------------
+            else:
+
+                already_started = any(
+                    row.get("status")
+                    in {"active", "completed"}
+                    for row in progress
+                )
+
+                if not already_started:
+                    first = min(
+                        progress,
+                        key=lambda row:
+                        row.get("route_position", 999999)
+                    )
+
+                    sb_patch(
+                        "team_progress",
+                        {
+                            "id": f"eq.{first['id']}",
+                        },
+                        {
+                            "status": "active",
+                            "volunteer_state": "idle",
+                        },
+                    )
+
+        # -----------------------------------------------------
+        # Event timestamp
+        # -----------------------------------------------------
+        event_update = {
+            "state": "LIVE",
+        }
+
+        if not event.get("starts_at"):
+            event_update["starts_at"] = (
+                datetime.now(timezone.utc).isoformat()
+            )
+
+        sb_patch(
+            "events",
+            {"id": f"eq.{event['id']}"},
+            event_update,
+        )
+
+    # ---------------------------------------------------------
+    # PAUSE / END / OTHER STATES
+    # ---------------------------------------------------------
+    else:
+
+        sb_patch(
+            "events",
+            {"id": f"eq.{event['id']}"},
+            {
+                "state": payload.state,
+            },
+        )
+
+    # ---------------------------------------------------------
+    # Audit
+    # ---------------------------------------------------------
     sb_post(
         "audit_logs",
         {
@@ -1237,14 +1388,14 @@ async def control_event(payload: EventAction):
             "actor_id": operator.get("id"),
             "metadata": {
                 "state": payload.state,
-                "previous_state": previous_state
-            }
-        }
+                "previous_state": previous_state,
+            },
+        },
     )
 
     return {
         "state": payload.state,
-        "previous_state": previous_state
+        "previous_state": previous_state,
     }
 
 @api.post("/control/volunteer")
