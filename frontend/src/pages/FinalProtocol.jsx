@@ -96,17 +96,12 @@ export default function FinalProtocol() {
 
     try {
       const requiredOrder = ["K", "R", "9", "7", "3", "\u25C7", "\u25B3"]; 
-const selectedOrder = answer.map((item) => item.value);
+      const selectedOrder = answer.map((item) => item.value);
 
-const correctOrder = requiredOrder.every(
-  (fragment, index) => selectedOrder[index] === fragment
-);
+      const correctOrder = requiredOrder.every(
+        (fragment, index) => selectedOrder[index] === fragment
+      );
 
-if (!correctOrder) {
-  return setNotice(
-    "The fragments are not in the correct protocol order."
-  );
-}
       /*
        * Convert the two shape fragments before sending:
        * △ = 3 sides
