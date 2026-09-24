@@ -862,83 +862,163 @@ async def request_hint(payload: HintRequest):
 
 @api.post("/team/final")
 async def submit_final(payload: FinalSubmission):
-        require_live_event()
+    require_live_event()
 
-        team_id = verify_team_token(payload.session_token)
-        team = get_team(team_id)
+    team_id = verify_team_token(payload.session_token)
+    team = get_team(team_id)
 
-        # Check checkpoint completion first
-        completed = sb_get(
-            "team_progress",
+    # Team must complete all 7 checkpoints first.
+    completed = sb_get(
+        "team_progress",
+        {
+            "team_id": f"eq.{team['id']}",
+            "status": "eq.completed",
+            "select": "id",
+        },
+    )
+
+    if len(completed) < 7:
+        raise HTTPException(
+            423,
+            f"Final protocol locked — {len(completed)}/7 nodes recovered.",
+        )
+
+    # Get the stored Master Key bcrypt hash.
+    settings = sb_get(
+        "event_settings",
+        {
+            "key": "eq.final_answer_hash",
+            "select": "key,value",
+            "limit": "1",
+        },
+    )
+
+    if not settings:
+        raise HTTPException(
+            500,
+            "final_answer_hash setting not found",
+        )
+
+    value = settings[0].get("value") or {}
+    final_hash = value.get("hash", "")
+
+    if not final_hash:
+        raise HTTPException(
+            500,
+            "Final answer hash is empty",
+        )
+
+    answer = payload.answer.strip()
+
+    # Verify Master Key.
+    try:
+        valid = bcrypt.checkpw(
+            answer.encode("utf-8"),
+            final_hash.encode("utf-8"),
+        )
+    except Exception as e:
+        print("FINAL ANSWER BCRYPT ERROR:", repr(e))
+        raise HTTPException(
+            500,
+            "Final answer verification failed",
+        )
+
+    # Wrong Master Key.
+    if not valid:
+        sb_post(
+            "audit_logs",
             {
-                "team_id": f"eq.{team['id']}",
-                "status": "eq.completed",
-                "select": "id",
+                "action": "final_protocol_failed",
+                "actor_type": "team",
+                "team_id": team["id"],
+                "metadata": {
+                    "answer_length": len(answer),
+                    "stage": "protocol",
+                },
             },
         )
 
-        if len(completed) < 7:
-            raise HTTPException(
-                423,
-                f"Final protocol locked — {len(completed)}/7 nodes recovered.",
-            )
+        return {
+            "valid": False,
+            "stage": "protocol",
+            "message": "Master key rejected",
+        }
 
-        # Read final answer hash from Supabase
-        settings = sb_get(
-            "event_settings",
-            {
-                "key": "eq.final_answer_hash",
-                "select": "key,value",
-                "limit": "1",
-            },
-        )
+    # Master Key is correct.
+    now = datetime.now(timezone.utc).isoformat()
 
-        print("FINAL DEBUG - settings:", settings)
+    # Store only a SHA-256 audit hash of the submitted answer.
+    answer_hash = hashlib.sha256(
+        answer.encode("utf-8")
+    ).hexdigest()
 
-        if not settings:
-            raise HTTPException(
-                500,
-                "final_answer_hash setting not found",
-            )
+    # Prevent duplicate successful submissions.
+    existing = sb_get(
+        "final_attempts",
+        {
+            "team_id": f"eq.{team['id']}",
+            "is_valid": "eq.true",
+            "select": "id,stage,protocol_solved_at,finished_at",
+            "order": "attempted_at.asc",
+            "limit": "1",
+        },
+    )
 
-        value = settings[0].get("value") or {}
-        final_hash = value.get("hash", "")
+    if existing:
+        attempt = existing[0]
 
-        print("FINAL DEBUG - hash exists:", bool(final_hash))
-        print("FINAL DEBUG - hash length:", len(final_hash))
-        print("FINAL DEBUG - hash prefix:", final_hash[:7])
-
-        answer = payload.answer.strip()
-
-        print("FINAL DEBUG - answer repr:", repr(answer))
-        print("FINAL DEBUG - answer length:", len(answer))
-
-        try:
-            valid = bcrypt.checkpw(
-                answer.encode("utf-8"),
-                final_hash.encode("utf-8"),
-            )
-        except Exception as e:
-            print("FINAL DEBUG - bcrypt error:", repr(e))
-            raise HTTPException(
-                500,
-                "Final answer verification failed",
-            )
-
-        print("FINAL DEBUG - bcrypt result:", valid)
-
-        if not valid:
+        if attempt.get("stage") == "finished":
             return {
-                "valid": False,
-                "stage": "protocol",
-                "message": "Master key rejected",
+                "valid": True,
+                "stage": "finished",
+                "already": True,
+                "message": "Protocol already completed.",
             }
 
         return {
             "valid": True,
             "stage": "audi2",
+            "already": True,
+            "protocol_solved_at": attempt.get(
+                "protocol_solved_at"
+            ),
             "message": "Protocol reconstructed. Return to Audi 2.",
         }
+
+    # IMPORTANT:
+    # Create the database record that clears the team for Audi 2.
+    sb_post(
+        "final_attempts",
+        {
+            "team_id": team["id"],
+            "answer_hash": answer_hash,
+            "is_valid": True,
+            "attempted_at": now,
+            "stage": "audi2",
+            "protocol_solved_at": now,
+            "finished_at": None,
+        },
+    )
+
+    sb_post(
+        "audit_logs",
+        {
+            "action": "final_protocol_reconstructed",
+            "actor_type": "team",
+            "team_id": team["id"],
+            "metadata": {
+                "stage": "audi2",
+                "protocol_solved_at": now,
+            },
+        },
+    )
+
+    return {
+        "valid": True,
+        "stage": "audi2",
+        "protocol_solved_at": now,
+        "message": "Protocol reconstructed. Return to Audi 2.",
+    }
 @api.post("/team/redeem-token")
 async def redeem_offline_token(payload: RedeemToken):
     require_live_event()
@@ -964,7 +1044,7 @@ async def audi2_finish(payload: Audi2Submission):
         {"admin", "super_admin", "event_control"}
     )
 
-    team = get_team(payload.team_id.upper())
+    team = get_team(payload.team_id.strip().upper())
 
     # Team must have successfully reconstructed the Final Protocol.
     attempts = sb_get(
