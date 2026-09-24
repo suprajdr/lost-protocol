@@ -95,7 +95,7 @@ export default function FinalProtocol() {
     setNotice("");
 
     try {
-      const requiredOrder = ["K", "R", "9", "7", "3", "â™¢", "â–³"];  
+      const requiredOrder = ["K", "R", "9", "7", "3", "\u25C7", "\u25B3"]; 
 const selectedOrder = answer.map((item) => item.value);
 
 const correctOrder = requiredOrder.every(
